@@ -104,9 +104,12 @@ function readAmoeba(ctx) {
             return {
                 wire: l.attrs["data-wire"], from: +l.attrs["data-from"], to: +l.attrs["data-to"],
                 fromNet: l.attrs["data-from-net"], toNet: l.attrs["data-to-net"],
-                a: path[0], b: path[path.length - 1], path,
+                a: path[0], b: path[path.length - 1], path, w: +l.attrs["stroke-width"],
             };
         }),
+        powerIn: kids.filter(c => c.tagName === "text" && c.attrs["data-power-in"])
+            .map(t => ({ net: t.attrs["data-power-in"], key: +t.attrs["data-key"], side: +t.attrs["data-led-side"],
+                x: px(t.attrs["data-pad-x"]), y: px(t.attrs["data-pad-y"]), lx: px(t.attrs.x), ly: px(t.attrs.y), text: t.textContent })),
         leds: kids.filter(c => c.tagName === "text" && c.attrs["data-led"] !== undefined)
             .map(t => ({ n: +t.attrs["data-led"], key: +t.attrs["data-led-key"], side: +t.attrs["data-led-side"], text: t.textContent })),
     };

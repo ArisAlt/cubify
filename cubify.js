@@ -29,7 +29,7 @@ const UNIT_SIZE = 55; // 1U = 55px
             // so wires can leave in any direction. The on-board diode's anode is on the R (row) pad,
             // so firmware must use DIODE_DIRECTION ROW2COL.
             const AMOEBA = {
-                wMM: 18.8, hMM: 18.1,
+                wMM: 18.8, hMM: 18.1, padMM: 1.5, // wire pads are Ø1.5 mm (0.9 mm drill)
                 pads: [
                     { net: "SR",   x: 10.8, y: 7.4 },  { net: "SR",   x: 89.2, y: 7.4 },
                     { net: "SC",   x: 25.7, y: 7.4 },  { net: "SC",   x: 77.4, y: 7.4 },
@@ -763,6 +763,17 @@ const UNIT_SIZE = 55; // 1U = 55px
         }
 
         // First pool pin the matrix doesn't use: drives the LED chain's first DIN.
+        // Where the LED chain's + and − come from on each controller (SK6812MINI wants ~5 V).
+        const LED_SUPPLY = {
+            waveshare_2040_plus: { vdd: "VBUS (pin 40)", vss: "GND (pin 38)", vddShort: "VBUS p40", vssShort: "GND p38" },
+            rp2040_zero: { vdd: "5V", vss: "GND" },
+            rp2040_tiny: { vdd: "5V", vss: "GND" },
+            pro_micro: { vdd: "VCC", vss: "GND" },
+            nice_nano: { vdd: "VCC (P0.13 switched)", vss: "GND", vddShort: "VCC", vssShort: "GND" },
+            nrf52840_nicenano_clone: { vdd: "VCC (P0.13 switched)", vss: "GND", vddShort: "VCC", vssShort: "GND" },
+        };
+        const ledSupply = profileId => LED_SUPPLY[profileId] || { vdd: "5V", vss: "GND" };
+
         function pickLedPin(profileId, activeRows, activeCols) {
             const profile = boardProfiles[profileId];
             const used = new Set([...activeRows, ...activeCols]);
@@ -772,7 +783,8 @@ const UNIT_SIZE = 55; // 1U = 55px
 
         // Draw every key as an Amoeba Royale board and wire nets pad-to-pad.
         // keyGeo: [{index, cx, cy, rot, side, normRow, c}] in draw (bottom-view) pixels.
-        function drawAmoebaLayer(svg, keyGeo, activeRows, ledPin, pinColor, layers) {
+        function drawAmoebaLayer(svg, keyGeo, activeRows, ledPin, pinColor, layers, supply) {
+            supply = supply || { vdd: "5V", vss: "GND" };
             layers = layers || { rows: true, cols: true, led: true, power: true, pads: true };
             const NS = "http://www.w3.org/2000/svg";
             const s = UNIT_SIZE / 19.05; // px per mm
@@ -824,65 +836,224 @@ const UNIT_SIZE = 55; // 1U = 55px
                     }));
                 return best;
             };
-            // Long jumps between rows would run as shallow diagonals on top of each other. Route
-            // them down → across → down instead, each in its own horizontal lane near the gap
-            // between the two pads. Every drawn segment is an obstacle for later lanes, so no
-            // two wires run along the same line (crossing at an angle is fine).
-            const obstacles = []; // drawn segments {a, b}
-            const LANE_GAP = 3;
-            const LANE_BAND = 0.3 * UNIT_SIZE; // lanes may spread this far either side of the gap
+            // Readability rules (also enforced by tests/amoeba.test.js):
+            //  1. Dead zone: two wires running side by side (within 30° of parallel) keep CLEARANCE
+            //     px between their EDGES (stroke widths included). Crossing at an angle is fine.
+            //  2. Pads: a wire only touches the pads at its own two ends; it stays PAD_CLEARANCE px
+            //     clear of every other pad (used or not — it's bare copper on the real board).
+            // Long jumps, and any wire that would break a rule, are routed down → across → down
+            // (or across → down → across) in the nearest lane that keeps both rules.
+            const CLEARANCE = 2;                 // drawing px; ×2 on screen at the default 200% size
+            const LANE_BAND = 0.6 * UNIT_SIZE;   // reaches the pad-free middle of the boards
+            const END_SKIP = 4;                  // pads: wires of one board meet near them anyway
+            const PARALLEL = Math.cos(30 * Math.PI / 180);
+            const PAD_R = AMOEBA.padMM / 2 * s, PAD_CLEARANCE = 1; // true-scale 1.5 mm wire pads
+            // Spatial grid so each check only looks at nearby pads and wires.
+            const CELL = 24, grid = new Map();
+            const cellsOf = (x1, y1, x2, y2) => {
+                const out = [];
+                for (let gx = Math.floor(Math.min(x1, x2) / CELL); gx <= Math.floor(Math.max(x1, x2) / CELL); gx++)
+                    for (let gy = Math.floor(Math.min(y1, y2) / CELL); gy <= Math.floor(Math.max(y1, y2) / CELL); gy++)
+                        out.push(gx + "," + gy);
+                return out;
+            };
+            const addToGrid = (item, x1, y1, x2, y2) => cellsOf(x1, y1, x2, y2).forEach(c => {
+                if (!grid.has(c)) grid.set(c, []);
+                grid.get(c).push(item);
+            });
+            const nearby = (x1, y1, x2, y2, pad) => {
+                const seen = new Set();
+                cellsOf(Math.min(x1, x2) - pad, Math.min(y1, y2) - pad, Math.max(x1, x2) + pad, Math.max(y1, y2) + pad)
+                    .forEach(c => (grid.get(c) || []).forEach(i => seen.add(i)));
+                return [...seen];
+            };
+            Object.values(padsOf).flat().forEach(pd => addToGrid({ pad: pd }, pd.x, pd.y, pd.x, pd.y));
+            const addObstacle = seg => addToGrid({ seg }, seg.a.x, seg.a.y, seg.b.x, seg.b.y);
             const distToSeg = (x, y, s) => {
                 const dx = s.b.x - s.a.x, dy = s.b.y - s.a.y, L = dx * dx + dy * dy || 1;
                 const t = Math.max(0, Math.min(1, ((x - s.a.x) * dx + (y - s.a.y) * dy) / L));
                 return Math.hypot(x - s.a.x - t * dx, y - s.a.y - t * dy);
             };
-            // Length of a→b that runs within LANE_GAP of something already drawn.
-            const sharedLength = (a, b) => {
-                const len = Math.hypot(b.x - a.x, b.y - a.y), n = Math.max(2, Math.ceil(len));
-                let hits = 0;
-                for (let i = 0; i <= n; i++) {
-                    const x = a.x + (b.x - a.x) * i / n, y = a.y + (b.y - a.y) * i / n;
-                    if (obstacles.some(s => distToSeg(x, y, s) < LANE_GAP)) hits++;
+            // Cost of p→q (stroke width w) for wire `id`: 100 per foreign pad it passes over, plus
+            // the length it runs inside another wire's dead zone. 0 = keeps both rules.
+            const clash = (p, q, w, ends, id) => {
+                const len = Math.hypot(q.x - p.x, q.y - p.y);
+                if (len < 0.5) return 0;
+                const padLim = w / 2 + PAD_R + PAD_CLEARANCE;
+                const seg = { a: p, b: q };
+                const ux = (q.x - p.x) / len, uy = (q.y - p.y) / len;
+                let cost = 0;
+                const lines = [];
+                for (const it of nearby(p.x, p.y, q.x, q.y, padLim + 3)) {
+                    if (it.pad) {
+                        if (!ends.includes(it.pad) && distToSeg(it.pad.x, it.pad.y, seg) < padLim) cost += 100;
+                        continue;
+                    }
+                    const o = it.seg;
+                    if (o.id === id) continue; // pieces of one wire meet at their pads
+                    const ol = Math.hypot(o.b.x - o.a.x, o.b.y - o.a.y);
+                    if (ol < 0.5 || Math.abs(((o.b.x - o.a.x) * ux + (o.b.y - o.a.y) * uy) / ol) < PARALLEL) continue;
+                    lines.push(o);
                 }
-                return hits * len / n;
+                if (lines.length) {
+                    const n = Math.max(2, Math.ceil(len / 1.5));
+                    for (let i = 0; i <= n; i++) {
+                        const x = p.x + (q.x - p.x) * i / n, y = p.y + (q.y - p.y) * i / n;
+                        if (ends.some(e => Math.hypot(x - e.x, y - e.y) < END_SKIP)) continue;
+                        if (lines.some(o => distToSeg(x, y, o) < (w + o.w) / 2 + CLEARANCE)) cost += len / n;
+                    }
+                }
+                return cost;
             };
-            // Try down→across→down lanes first, then across→down→across (for pads stacked on one
-            // edge, e.g. LED + above LED −); keep the shape that shares the least with what's drawn.
-            const dogleg = (a, b) => {
-                let best = null;
-                const consider = pts => {
-                    let shared = 0;
-                    for (let j = 0; j < pts.length - 1; j++) shared += sharedLength(pts[j], pts[j + 1]);
-                    if (!best || shared < best.shared - 0.5) best = { pts, shared };
-                    return shared <= 4;
+            const pathClash = (pts, w, id) => {
+                const ends = [pts[0], pts[pts.length - 1]];
+                let total = 0;
+                for (let j = 0; j < pts.length - 1; j++) total += clash(pts[j], pts[j + 1], w, ends, id);
+                return total;
+            };
+            // Nearest lane (1 px steps) that keeps the dead zone; down→across→down first, then
+            // across→down→across (for pads stacked on one edge, e.g. LED + above LED −).
+            const pathLen = pts => pts.slice(1).reduce((n, p, i) => n + Math.hypot(p.x - pts[i].x, p.y - pts[i].y), 0);
+            // All down→across→down and across→down→across lanes (1 px steps, up to 1.2u from the
+            // middle); of those that keep both rules, the SHORTEST wins — no hooks past the pads.
+            const dogleg = (a, b, w, id) => {
+                let best = null, bestOk = null;
+                const tryPts = pts => {
+                    const len = pathLen(pts);
+                    if (bestOk && len >= bestOk.len) return; // can't beat the shortest clean route
+                    const c = pathClash(pts, w, id);
+                    if (c <= 0.5) { if (!bestOk || len < bestOk.len) bestOk = { pts, c, len }; }
+                    else if (!best || c < best.c) best = { pts, c, len };
                 };
-                const midY = (a.y + b.y) / 2, midX = (a.x + b.x) / 2;
-                for (let d = 0; d <= LANE_BAND + 0.01; d += LANE_GAP) {
-                    for (const y of d ? [midY + d, midY - d] : [midY])
-                        if (consider([a, { x: a.x, y }, { x: b.x, y }, b])) return best.pts;
-                }
-                for (let d = 0; d <= LANE_BAND + 0.01; d += LANE_GAP) {
-                    for (const x of d ? [midX + d, midX - d] : [midX])
-                        if (consider([a, { x, y: a.y }, { x, y: b.y }, b])) return best.pts;
-                }
-                return best.pts;
+                const midY = (a.y + b.y) / 2, midX = (a.x + b.x) / 2, R = 1.2 * UNIT_SIZE;
+                for (let d = 0; d <= R; d += 1)
+                    for (const v of d ? [d, -d] : [0]) {
+                        tryPts([a, { x: a.x, y: midY + v }, { x: b.x, y: midY + v }, b]);
+                        tryPts([a, { x: midX + v, y: a.y }, { x: midX + v, y: b.y }, b]);
+                    }
+                return bestOk || best;
             };
-            const shape = (a, b, kind) => {
-                const dx = Math.abs(b.x - a.x), dy = Math.abs(b.y - a.y);
-                if (kind === "row") return [a, b]; // rows follow their row; they're routed first
-                if (kind === "col" && dx > 0.35 * UNIT_SIZE) return dogleg(a, b);
-                if (kind === "led" && Math.hypot(dx, dy) > 1.3 * UNIT_SIZE && dy > 0.3 * UNIT_SIZE) return dogleg(a, b);
-                if (sharedLength(a, b) > 6) return dogleg(a, b);
-                return [a, b];
+            // Fallback maze router (A* on a 2 px grid) for spots no simple shape can get through.
+            // Foreign pads are hard walls (a wire over a pad could short on the real board). Running
+            // along another wire inside its dead zone is only expensive (readability), so in a spot
+            // too tight for both rules the wire still stays off every pad. Crossing at right angles
+            // is free.
+            const maze = (a, b, w, id) => {
+                const G = 2, margin = 1.2 * UNIT_SIZE;
+                const x0 = Math.min(a.x, b.x) - margin, y0 = Math.min(a.y, b.y) - margin;
+                const W = Math.ceil((Math.abs(a.x - b.x) + 2 * margin) / G) + 1;
+                const H = Math.ceil((Math.abs(a.y - b.y) + 2 * margin) / G) + 1;
+                const wall = new Uint8Array(W * H), noH = new Uint8Array(W * H), noV = new Uint8Array(W * H);
+                const mark = (arr, sx1, sy1, sx2, sy2, lim, near) => {
+                    const i1 = Math.max(0, Math.floor((Math.min(sx1, sx2) - lim - x0) / G)), i2 = Math.min(W - 1, Math.ceil((Math.max(sx1, sx2) + lim - x0) / G));
+                    const j1 = Math.max(0, Math.floor((Math.min(sy1, sy2) - lim - y0) / G)), j2 = Math.min(H - 1, Math.ceil((Math.max(sy1, sy2) + lim - y0) / G));
+                    for (let j = j1; j <= j2; j++) for (let i = i1; i <= i2; i++)
+                        if (near(x0 + i * G, y0 + j * G)) arr[j * W + i] = 1;
+                };
+                const padLim = w / 2 + PAD_R + PAD_CLEARANCE + 0.4;
+                for (const it of nearby(x0, y0, x0 + W * G, y0 + H * G, 0)) {
+                    if (it.pad) {
+                        if (it.pad === a || it.pad === b) continue;
+                        const pd = it.pad;
+                        mark(wall, pd.x, pd.y, pd.x, pd.y, padLim, (x, y) => Math.hypot(x - pd.x, y - pd.y) < padLim);
+                        continue;
+                    }
+                    const o = it.seg;
+                    if (o.id === id) continue;
+                    const ang = Math.abs(Math.atan2(o.b.y - o.a.y, o.b.x - o.a.x)) * 180 / Math.PI;
+                    const axisH = ang <= 30 || ang >= 150, axisV = ang >= 60 && ang <= 120;
+                    if (!axisH && !axisV) continue;
+                    const lim = (w + o.w) / 2 + CLEARANCE + 0.4;
+                    mark(axisH ? noH : noV, o.a.x, o.a.y, o.b.x, o.b.y, lim, (x, y) =>
+                        distToSeg(x, y, o) < lim && Math.hypot(x - a.x, y - a.y) >= END_SKIP && Math.hypot(x - b.x, y - b.y) >= END_SKIP);
+                }
+                const cell = p => [Math.round((p.x - x0) / G), Math.round((p.y - y0) / G)];
+                const [si, sj] = cell(a), [ti, tj] = cell(b);
+                const start = sj * W + si, goal = tj * W + ti;
+                wall[start] = wall[goal] = 0;
+                // state = cell * 4 + direction (0 → 1 ← 2 ↓ 3 ↑); bends cost extra to keep paths straight
+                const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]], BEND = 8, CROWD = 40;
+                const dist = new Float32Array(W * H * 4).fill(Infinity), prev = new Int32Array(W * H * 4).fill(-1);
+                const heap = [];
+                const push = (st, d, f) => { heap.push([f, d, st]); let i = heap.length - 1;
+                    while (i > 0) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p; } };
+                const pop = () => { const top = heap[0], last = heap.pop();
+                    if (heap.length) { heap[0] = last; let i = 0;
+                        for (;;) { const l = 2 * i + 1, r = l + 1; let m = i;
+                            if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+                            if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+                            if (m === i) break; [heap[m], heap[i]] = [heap[i], heap[m]]; i = m; } }
+                    return top; };
+                const hcost = c => (Math.abs(c % W - ti) + Math.abs(Math.floor(c / W) - tj)) * G;
+                for (let d = 0; d < 4; d++) { dist[start * 4 + d] = 0; push(start * 4 + d, 0, hcost(start)); }
+                let found = -1, steps = 0;
+                while (heap.length && steps++ < 200000) {
+                    const [, dcur, st] = pop();
+                    if (dcur > dist[st]) continue;
+                    const c = st >> 2, dir = st & 3;
+                    if (c === goal) { found = st; break; }
+                    const ci = c % W, cj = Math.floor(c / W);
+                    for (let nd = 0; nd < 4; nd++) {
+                        const ni = ci + DIRS[nd][0], nj = cj + DIRS[nd][1];
+                        if (ni < 0 || nj < 0 || ni >= W || nj >= H) continue;
+                        const nc = nj * W + ni;
+                        if (wall[nc]) continue;
+                        const crowd = (nd < 2 ? noH[nc] : noV[nc]) ? CROWD : 0;
+                        const ndist = dcur + G + crowd + (nd === dir ? 0 : BEND), ns = nc * 4 + nd;
+                        if (ndist < dist[ns]) { dist[ns] = ndist; prev[ns] = st; push(ns, ndist, ndist + hcost(nc)); }
+                    }
+                }
+                if (found < 0) return null;
+                const cells = [];
+                for (let st = found; st >= 0; st = prev[st]) cells.unshift(st >> 2);
+                const pts = [a];
+                for (let k = 1; k < cells.length - 1; k++) {
+                    const p0 = cells[k - 1], p1 = cells[k], p2 = cells[k + 1];
+                    if ((p1 - p0) !== (p2 - p1)) pts.push({ x: x0 + (p1 % W) * G, y: y0 + Math.floor(p1 / W) * G });
+                }
+                pts.push(b);
+                return { pts, c: pathClash(pts, w, id) };
+            };
+            const straight = (a, b, w, id) => ({ pts: [a, b], c: pathClash([a, b], w, id) });
+            // Every pad pair of the two nets; of the routes that keep both rules, the shortest wins
+            // (so a clean straight link between facing pads beats any detour). Long jumps always
+            // take a lane. If nothing simple works, the maze router tries the nearest pairs.
+            const route = (ka, netA, kb, netB, kind, w, id) => {
+                const pairs = [];
+                padsOf[ka].filter(p => p.net === netA).forEach(pa =>
+                    padsOf[kb].filter(p => p.net === netB).forEach(pb =>
+                        pairs.push({ a: pa, b: pb, d: Math.hypot(pa.x - pb.x, pa.y - pb.y) })));
+                pairs.sort((x, y) => x.d - y.d);
+                const isLong = (a, b) => {
+                    const dx = Math.abs(b.x - a.x), dy = Math.abs(b.y - a.y);
+                    return (kind === "col" && dx > 0.35 * UNIT_SIZE) ||
+                           (kind === "led" && Math.hypot(dx, dy) > 1.3 * UNIT_SIZE && dy > 0.3 * UNIT_SIZE);
+                };
+                let bestOk = null, best = null;
+                const consider = (r, pr) => {
+                    if (!r) return;
+                    const cand = { ...r, a: pr.a, b: pr.b, len: pathLen(r.pts) };
+                    if (cand.c <= 0.5) { if (!bestOk || cand.len < bestOk.len) bestOk = cand; }
+                    else if (!best || cand.c < best.c) best = cand; // pad hits cost 100 each, so pad-free wins
+                };
+                for (const pr of pairs) if (!isLong(pr.a, pr.b)) consider(straight(pr.a, pr.b, w, id), pr);
+                if (bestOk) return bestOk;
+                for (const pr of pairs) {
+                    if (bestOk && pr.d >= bestOk.len) break; // farther pairs can't be shorter
+                    consider(dogleg(pr.a, pr.b, w, id), pr);
+                }
+                if (bestOk) return bestOk;
+                for (const pr of pairs.slice(0, 4)) consider(maze(pr.a, pr.b, w, id), pr);
+                return bestOk || best;
             };
             const drawn = { vdd: [], vss: [], row: [], led: [], col: [] };
             const chain = (seq, netA, netB, color, width, dash, wire) => {
                 const kind = wire.split(":")[0];
                 for (let i = 0; i < seq.length - 1; i++) {
-                    const b = link(seq[i].index, netA, seq[i + 1].index, netB);
+                    const b = route(seq[i].index, netA, seq[i + 1].index, netB, kind, width, wire);
                     b.a.used = b.b.used = true;
-                    const pts = shape(b.a, b.b, kind);
-                    for (let j = 0; j < pts.length - 1; j++) obstacles.push({ a: pts[j], b: pts[j + 1] });
+                    const pts = b.pts;
+                    for (let j = 0; j < pts.length - 1; j++) addObstacle({ a: pts[j], b: pts[j + 1], w: width, id: wire });
                     drawn[kind].push(line(pts, color, width, dash, {
                         "data-wire": wire, "data-from": seq[i].index, "data-to": seq[i + 1].index,
                         "data-from-net": netA, "data-to-net": netB,
@@ -929,6 +1100,28 @@ const UNIT_SIZE = 55; // 1U = 55px
                     t.textContent = n === 0 ? `L0 ◀ ${ledPin || "LED pin"}` : `L${n}`;
                     svg.appendChild(t);
                 });
+                // Power feed: label the first board's + and − pads that face away from the chain
+                // (free of chain wires) with the controller pin they connect to.
+                if (seq.length) {
+                    const k0 = seq[0], away = seq[1] || null;
+                    for (const [net, text, color] of [["VDD", `+ ${supply.vddShort || supply.vdd}`, AMOEBA.colors.VDD], ["VSS", `− ${supply.vssShort || supply.vss}`, AMOEBA.colors.VSS]]) {
+                        const cands = padsOf[k0.index].filter(p => p.net === net);
+                        const pad = away ? cands.reduce((m, p) => (Math.hypot(p.x - away.cx, p.y - away.cy) > Math.hypot(m.x - away.cx, m.y - away.cy) ? p : m)) : cands[0];
+                        pad.used = true;
+                        // Inside the board, next to the pad, reading toward the board's centre.
+                        const dx = pad.x - k0.cx, edgePad = Math.abs(dx) > 5; // on the board's left/right edge
+                        const t = document.createElementNS(NS, "text");
+                        t.setAttribute("x", edgePad ? pad.x - Math.sign(dx) * 4.5 : pad.x);
+                        t.setAttribute("y", edgePad ? pad.y + 2.3 : pad.y + (pad.y > k0.cy ? -5 : 8));
+                        t.setAttribute("text-anchor", !edgePad ? "middle" : dx < 0 ? "start" : "end");
+                        t.setAttribute("font-size", "6.5"); t.setAttribute("font-weight", "bold");
+                        t.setAttribute("fill", color);
+                        t.setAttribute("data-power-in", net); t.setAttribute("data-key", k0.index); t.setAttribute("data-led-side", side);
+                        t.setAttribute("data-pad-x", pad.x); t.setAttribute("data-pad-y", pad.y);
+                        t.textContent = text;
+                        svg.appendChild(t);
+                    }
+                }
                 chains.push({ side: +side, count: seq.length, first: seq[0] && seq[0].index });
             });
 
@@ -937,7 +1130,7 @@ const UNIT_SIZE = 55; // 1U = 55px
             keyGeo.forEach(k => padsOf[k.index].forEach(p => {
                 if (!p.used && !layers.pads) return;
                 const c = document.createElementNS(NS, "circle");
-                c.setAttribute("cx", p.x); c.setAttribute("cy", p.y); c.setAttribute("r", p.used ? "2.8" : "1.6");
+                c.setAttribute("cx", p.x); c.setAttribute("cy", p.y); c.setAttribute("r", p.used ? PAD_R : PAD_R * 0.6);
                 c.setAttribute("fill", AMOEBA.colors[p.net]);
                 if (!p.used) c.setAttribute("fill-opacity", "0.45");
                 c.setAttribute("data-pad", p.net); c.setAttribute("data-key", k.index);
@@ -994,7 +1187,8 @@ const UNIT_SIZE = 55; // 1U = 55px
             return { errors: errors, hardwareError: hardwareError };
         }
 
-        function renderAmoebaLegend(chains, ledPin, activeRows, activeCols) {
+        function renderAmoebaLegend(chains, ledPin, activeRows, activeCols, supply) {
+            supply = supply || { vdd: "5V", vss: "GND" };
             if (!amoebaLegend) return;
             const total = chains.reduce((n, c) => n + c.count, 0);
             const sw = (color, dash) => `<span style="display:inline-block;width:26px;height:0;border-top:3px ${dash ? 'dashed' : 'solid'} ${color};vertical-align:middle;margin-right:6px"></span>`;
@@ -1002,7 +1196,7 @@ const UNIT_SIZE = 55; // 1U = 55px
             amoebaLegend.innerHTML = [
                 `<b>🧬 Amoeba Royale v2.0 — solder side.</b> Pads: <span style="color:${AMOEBA.colors.SR}">● R row</span> · <span style="color:${AMOEBA.colors.SC}">● C column</span> · <span style="color:${AMOEBA.colors.VDD}">● LED +</span> · <span style="color:${AMOEBA.colors.VSS}">● LED −</span> · <span style="color:${AMOEBA.colors.DIN}">● LED data in/out</span>`,
                 `${sw('#cdd6f4')}Row wires: R pad → R pad, to row pins ${activeRows.join(', ')}. ${sw('#cdd6f4', true)}Column wires: C pad → C pad, to column pins ${activeCols.join(', ')}.`,
-                `<span style="color:${AMOEBA.colors.DIN}">LED data</span>: DOUT → next DIN along the numbers L0 → L${Math.max(total - 1, 0)}${perHalf}. L0's DIN goes to <b>${ledPin || 'a free pin (none left on this board)'}</b>. LED + / − run along the same path; feed + from 5 V (VBUS), − from GND.`,
+                `<span style="color:${AMOEBA.colors.DIN}">LED data</span>: DOUT → next DIN along the numbers L0 → L${Math.max(total - 1, 0)}${perHalf}. L0's DIN goes to <b>${ledPin || 'a free pin (none left on this board)'}</b>. LED + / − run along the same path; on the first board, + goes to <b>${supply.vdd}</b> and − to <b>${supply.vss}</b> (labelled next to its pads).`,
                 `⚠️ The Amoeba's diode makes this <b>ROW2COL</b> — the Vial export switches to it while this box is ticked. ${total} SK6812MINI LEDs can draw up to ~${(total * 0.06).toFixed(1)} A at full white: cap brightness (RGB_MATRIX_MAXIMUM_BRIGHTNESS) to stay within USB's 0.5 A.`,
             ].join('<br>');
             amoebaLegend.style.display = 'block';
@@ -1273,10 +1467,10 @@ const UNIT_SIZE = 55; // 1U = 55px
 
                 if (amoebaMode) {
                     const ledPin = pickLedPin(selectedProfile, activeRows, activeCols);
-                    const chains = drawAmoebaLayer(svg, keyGeo, activeRows, ledPin, pinColor, amoebaLayers());
+                    const chains = drawAmoebaLayer(svg, keyGeo, activeRows, ledPin, pinColor, amoebaLayers(), ledSupply(selectedProfile));
                     amoebaSvg = svg;
                     stage.appendChild(svg);
-                    renderAmoebaLegend(chains, ledPin, activeRows, activeCols);
+                    renderAmoebaLegend(chains, ledPin, activeRows, activeCols, ledSupply(selectedProfile));
                     stage.style.width = (max_x_logical * UNIT_SIZE + 20) + 'px';
                     stage.style.height = Math.max(max_y * UNIT_SIZE + 20, 250) + 'px';
                     return;
