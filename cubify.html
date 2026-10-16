@@ -189,15 +189,8 @@
             </div>
 
             <label for="boardSelect">MCU Profile:</label>
-            <select id="boardSelect">
-                <option value="json_file">📄 Read Pins from JSON</option>
-                <option value="waveshare_2040_plus">Waveshare RP2040 Plus (Split)</option>
-                <option value="rp2040_zero">Waveshare RP2040 Zero (Split)</option>
-                <option value="rp2040_tiny">Waveshare RP2040 Tiny (Split)</option>
-                <option value="pro_micro">Arduino Pro Micro (ATmega32U4)</option>
-                <option value="nice_nano">nice!nano v2.0 (nRF52840)</option>
-                <option value="nrf52840_nicenano_clone">SuperMini nRF52840 (nice!nano Clone)</option>
-            </select>
+            <select id="boardSelect"><!-- filled by cubify.js: monolithic / split groups --></select>
+            <span id="boardInfo" style="font-size: 12px; color: var(--text-sub);"></span>
 
             <label style="margin-left: 15px; display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--text-sub); font-size: 14px; font-weight: bold;">
                 <input type="checkbox" id="showWiring"> Show Wiring
@@ -287,24 +280,8 @@
             <p style="font-size:12px; color:var(--text-sub);">Paste your raw JSON from <a href="https://editor.keyboard-tools.xyz/" target="_blank" style="color:var(--blue, #89b4fa);">editor.keyboard-tools.xyz</a> below. The visualizer will auto-route the matrix based on physical positions.</p>
             
             <div style="margin-bottom: 15px; display:flex; flex-direction:column; gap:5px;">
-                <label style="font-size:12px; color:var(--text-sub);">Keyboard Type:</label>
-                <select id="kleIsSplit" style="width: 100%; padding: 5px; background: #11111b; color: var(--text-main); border: 1px solid var(--key-bg);">
-                    <option value="false" selected>Monolithic (Standard / Alice)</option>
-                    <option value="true">Split Keyboard (Two Halves)</option>
-                </select>
-            </div>
-            
-            <div style="margin-bottom: 15px; display:flex; flex-direction:column; gap:5px;">
-                <label style="font-size:12px; color:var(--text-sub);">Target Microcontroller:</label>
-                <select id="kleBoardSelect" style="width: 100%; padding: 5px; background: #11111b; color: var(--text-main); border: 1px solid var(--key-bg);">
-                    <option value="auto">Auto-Select (Best Fit)</option>
-                    <option value="waveshare_2040_plus">Waveshare RP2040-Plus</option>
-                    <option value="rp2040_zero">RP2040 Zero</option>
-                    <option value="rp2040_tiny">RP2040 Tiny</option>
-                    <option value="pro_micro">Pro Micro (ATmega32U4)</option>
-                    <option value="nice_nano">nice!nano</option>
-                    <option value="nrf52840_nicenano_clone">SuperMini nRF52840</option>
-                </select>
+                <label style="font-size:12px; color:var(--text-sub);">Keyboard &amp; controller:</label>
+                <select id="kleBoardSelect" style="width: 100%; padding: 5px; background: #11111b; color: var(--text-main); border: 1px solid var(--key-bg);"><!-- filled by cubify.js --></select>
             </div>
             
             <textarea id="kleInput" placeholder='[["Esc","Q","W","E"...]]' style="width:100%; height:200px; background:#11111b; color:var(--text-main); border:1px solid var(--key-bg); padding:10px; font-family:monospace; margin-bottom:10px; resize:none; box-sizing: border-box;"></textarea>
@@ -316,6 +293,6 @@
         </div>
     </div>
 
-    <script src="cubify.js?v=13"></script>
+    <script src="cubify.js?v=14"></script>
 </body>
 </html>

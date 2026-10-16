@@ -13,6 +13,7 @@
   - Arduino Pro Micro (AVR)
   - ZMK nice!nano (nRF52840)
   - ZMK NRF52840 Dev Board (nice!nano V2.0 Compatible)
+- **Monolithic or split, chosen with the board**: both board dropdowns are grouped into *Monolithic · one controller* and *Split · two controllers* (`2× RP2040-Zero · TRRS cable`, `2× nice!nano · wireless (ZMK)`, …). A wired split reserves one TRRS link pin per half (RP2040-Plus GP28, Zero/Tiny GP29, Pro Micro D2), keeps it out of the matrix and exports it as `split.serial`; changing the dropdown re-routes an imported KLE layout. nRF52840 boards are ZMK-only, so the Vial export refuses them.
 - **Top and Bottom Views**: Toggle between viewing the keyboard from the top (keycaps) and the bottom (wiring/solder view, which horizontally mirrors the layout).
 - **Interactive Tooltips**: Hover over keys to see exact matrix coordinates `[row, col]` and the specific pins to solder for your selected MCU.
 - **Hardware Peripherals Panel**: Dynamically displays recommended or JSON-configured pins for OLED displays (I2C SDA/SCL) and Rotary Encoders (Pin A/Pin B).

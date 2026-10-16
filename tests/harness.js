@@ -47,17 +47,16 @@ function load({ split = false, board = "auto" } = {}) {
     }
     class FileReader { readAsText(f) { this.onload({ target: { result: f.text } }); } }
     const URL = { createObjectURL: () => "blob:", revokeObjectURL() {} };
-    byId("boardSelect").value = "json_file";
     // Same defaults as cubify.html's Amoeba layer bar.
     for (const id of ["amoebaShowRows", "amoebaShowCols", "amoebaShowLed"]) byId(id).checked = true;
     byId("amoebaZoom").value = "2";
-    byId("kleIsSplit").value = split ? "true" : "false";
-    byId("kleBoardSelect").value = board;
 
     const factory = new Function("document", "window", "alert", "JSZip", "URL", "FileReader",
         SRC + "\n;return { get currentJSON(){ return currentJSON; }, renderKeyboard, boardProfiles," +
         " get isBottomView(){ return isBottomView; } };");
     const app = factory(document, {}, m => alerts.push(String(m)), JSZip, URL, FileReader);
+    // cubify.js builds both board dropdowns at load; pick like a user would.
+    byId("kleBoardSelect").value = (split ? "split:" : "") + board;
     return { app, els, byId, alerts, zipFiles };
 }
 

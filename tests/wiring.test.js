@@ -18,7 +18,7 @@ async function checkBoard(ctx, { split = false, expectFit = true } = {}) {
     const json = ctx.app.currentJSON;
     assert.ok(json, `import failed: ${ctx.alerts.join(" | ")}`);
     const rows = json.matrix_pins.rows, cols = json.matrix_pins.cols;
-    const board = ctx.byId("boardSelect").value;
+    const board = ctx.byId("boardSelect").value.replace(/^split:/, "");
     const profile = ctx.app.boardProfiles[board];
 
     // ── 1. pin lists are sane ─────────────────────────────────────────────
@@ -129,6 +129,12 @@ async function checkBoard(ctx, { split = false, expectFit = true } = {}) {
 
     // ── 6. export: firmware files agree with what's on screen ─────────────
     const files = await h.exportZip(ctx);
+    if (["nice_nano", "nrf52840_nicenano_clone"].includes(board)) {
+        // nRF52840 boards run ZMK: the Vial export must refuse instead of writing firmware that can't build
+        assert.deepEqual(Object.keys(files), [], "no Vial ZIP for a ZMK-only board");
+        assert.ok(ctx.alerts.some(a => /ZMK/.test(a)), "explains why the export is refused");
+        return { keys, rows, cols, files };
+    }
     const cfg = h.parseConfigH(files["config.h"]);
     assert.deepEqual(cfg.rowPins, rows, "config.h MATRIX_ROW_PINS differs from displayed row pins");
     assert.deepEqual(cfg.colPins, cols, "config.h MATRIX_COL_PINS differs from displayed col pins");

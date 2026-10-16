@@ -3,6 +3,8 @@ const UNIT_SIZE = 55; // 1U = 55px
         let isBottomView = false;
         let parsedKeymaps = null;
         let assignedEncoders = [];
+        let lastKleText = null;    // last imported KLE, so a new board choice can re-route it
+        let quietReroute = false;  // true while re-routing from the board dropdown (no popups)
 
             // Board profiles: `rows` and `cols` are the DEFAULT pin segregation.
             // `pins` is the FULL pool of usable GPIOs — used for dynamic allocation
@@ -22,6 +24,26 @@ const UNIT_SIZE = 55; // 1U = 55px
                 "nrf52840_nicenano_clone": { rows: ["P0.06","P0.08","P0.17","P0.20","P0.22","P0.24"], cols: ["P0.31","P0.29","P0.02","P1.15","P1.13","P1.11","P0.10"], pins: ["P0.06","P0.08","P0.17","P0.20","P0.22","P0.24","P0.31","P0.29","P0.02","P1.15","P1.13","P1.11","P0.10","P0.09","P1.00","P0.11","P1.02","P1.04","P1.06"], periph: { sda: "P1.04", scl: "P1.06", enc_a: "P0.09", enc_b: "P1.00", enc2_a: "P0.11", enc2_b: "P1.02" } },
                 "waveshare_2040_plus":     { rows: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6","GP7","GP8","GP9"], cols: ["GP10","GP11","GP12","GP13","GP14","GP15","GP16","GP17","GP18","GP19","GP20","GP21","GP22","GP26","GP27","GP28"], pins: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6","GP7","GP8","GP9","GP10","GP11","GP12","GP13","GP14","GP15","GP16","GP17","GP18","GP19","GP20","GP21","GP22","GP26","GP27","GP28"], periph: {} }
             };
+
+            // How each controller is named, and how two of them talk on a split keyboard:
+            // "trrs" = wired half-duplex serial over a TRRS/TRS cable on `splitPin` (same pin on both
+            // halves, kept out of the matrix); "wireless" = BLE between the halves (ZMK, no pin).
+            const BOARD_META = {
+                waveshare_2040_plus:     { label: "Waveshare RP2040-Plus",          link: "trrs", splitPin: "GP28" },
+                rp2040_zero:             { label: "Waveshare RP2040-Zero",          link: "trrs", splitPin: "GP29" },
+                rp2040_tiny:             { label: "Waveshare RP2040-Tiny",          link: "trrs", splitPin: "GP29" },
+                pro_micro:               { label: "Pro Micro (ATmega32U4)",         link: "trrs", splitPin: "D2" },
+                nice_nano:               { label: "nice!nano v2 (nRF52840, ZMK)",   link: "wireless" },
+                nrf52840_nicenano_clone: { label: "SuperMini nRF52840 (ZMK)",       link: "wireless" },
+            };
+            // Dropdown values: "<board>" = one controller, "split:<board>" = two controllers.
+            const parseBoardChoice = v => {
+                v = v || "";
+                const split = v.startsWith("split:");
+                return { id: split ? v.slice(6) : v, split };
+            };
+            const boardChoiceValue = (id, split) => (split ? "split:" : "") + id;
+            const isZmkOnly = id => (BOARD_META[id] || {}).link === "wireless";
 
             // Amoeba Royale v2.0 single-key PCB (github.com/mtl/keyboard-pcbs, CC0), seen from the
             // SOLDER side (= Cubify's bottom view). Pad positions are % of the 18.8 x 18.1 mm board,
@@ -110,11 +132,36 @@ const UNIT_SIZE = 55; // 1U = 55px
 
         const importKleBtn = document.getElementById('importKleBtn');
         const kleModal = document.getElementById('kleModal');
-        const kleIsSplit = document.getElementById('kleIsSplit');
         const kleBoardSelect = document.getElementById('kleBoardSelect');
         const kleInput = document.getElementById('kleInput');
         const processKleBtn = document.getElementById('processKleBtn');
         const closeKleModalBtn = document.getElementById('closeKleModalBtn');
+
+        // Both board dropdowns come from BOARD_META: one group per keyboard type.
+        function fillBoardSelect(select, { withJson, withAuto }) {
+            if (!select) return;
+            select.innerHTML = "";
+            const opt = (value, text, parent) => {
+                const o = document.createElement("option");
+                o.value = value; o.textContent = text;
+                parent.appendChild(o);
+            };
+            if (withJson) opt("json_file", "📄 Read pins from JSON", select);
+            const mono = document.createElement("optgroup");
+            mono.label = "⌨️ Monolithic · one controller";
+            if (withAuto) opt("auto", "Auto-select (best fit)", mono);
+            Object.entries(BOARD_META).forEach(([id, m]) => opt(boardChoiceValue(id, false), m.label, mono));
+            const split = document.createElement("optgroup");
+            split.label = "✂️ Split · two controllers (one per half)";
+            if (withAuto) opt("split:auto", "Auto-select (best fit, ×2)", split);
+            Object.entries(BOARD_META).forEach(([id, m]) => opt(boardChoiceValue(id, true),
+                `2× ${m.label.replace(/ \(.*\)$/, "")} · ${m.link === "wireless" ? "wireless (ZMK)" : "TRRS cable"}`, split));
+            select.appendChild(mono);
+            select.appendChild(split);
+            select.value = withJson ? "json_file" : "auto";
+        }
+        fillBoardSelect(boardSelect, { withJson: true, withAuto: false });
+        fillBoardSelect(kleBoardSelect, { withJson: false, withAuto: true });
 
         if (importKleBtn) {
             importKleBtn.addEventListener('click', () => {
@@ -149,7 +196,7 @@ const UNIT_SIZE = 55; // 1U = 55px
                                 const rowsMatch = jRows.every(r => profile.rows.includes(r));
                                 const colsMatch = jCols.every(c => profile.cols.includes(c));
                                 if (rowsMatch && colsMatch) {
-                                    boardSelect.value = profileId;
+                                    boardSelect.value = boardChoiceValue(profileId, !!(currentJSON.split && (currentJSON.split.enabled ?? true)));
                                     break;
                                 }
                             }
@@ -358,7 +405,9 @@ const UNIT_SIZE = 55; // 1U = 55px
                     numLogicalCols = 0;
                     let perHalfRows = 0; // Only meaningful for split keyboards (rows per MCU)
 
-                    const isSplit = kleIsSplit.value === "true";
+                    const kleChoice = parseBoardChoice(kleBoardSelect.value);
+                    const isSplit = kleChoice.split;
+                    lastKleText = rawText;
 
                     // Find physical midpoint (largest horizontal gap in the centre 30% of the board)
                     let max_x = 0;
@@ -425,42 +474,38 @@ const UNIT_SIZE = 55; // 1U = 55px
                     let requiredPins = pinsPerMCU;
                     let foundFit = false;
                     
-                    const explicitBoard = kleBoardSelect.value;
+                    const explicitBoard = kleChoice.id;
+                    // On a wired split, one pin per half carries the TRRS link and can't be in the matrix.
+                    const linkPinOf = id => (isSplit && BOARD_META[id] && BOARD_META[id].link === "trrs") ? BOARD_META[id].splitPin : null;
+                    const matrixPool = id => {
+                        const pr = boardProfiles[id], link = linkPinOf(id);
+                        return (pr.pins || [...pr.rows, ...pr.cols]).filter(pin => pin !== link);
+                    };
                     
                     if (explicitBoard !== "auto") {
                         bestBoard = explicitBoard;
-                        const profile = boardProfiles[bestBoard];
-                        if (profile) {
-                            const totalPins = (profile.pins || [...profile.rows, ...profile.cols]).length;
-                            if ((profile.rows.length >= perHalfRows && profile.cols.length >= numLogicalCols) ||
-                                totalPins >= requiredPins) {
-                                foundFit = true;
-                            }
-                        }
+                        foundFit = !!boardProfiles[bestBoard] && matrixPool(bestBoard).length >= requiredPins;
                     } else {
-                        // Auto-Select Best Board — prefer smallest board that fits
-                        for (const [profileId, profile] of Object.entries(boardProfiles)) {
-                            const totalPins = (profile.pins || [...profile.rows, ...profile.cols]).length;
-                            const strictFit = profile.rows.length >= perHalfRows && profile.cols.length >= numLogicalCols;
-                            const dynamicFit = totalPins >= requiredPins;
-                            if (strictFit || dynamicFit) {
-                                bestBoard = profileId;
-                                foundFit = true;
-                                if (profileId === "pro_micro" && strictFit) break;
-                            }
-                        }
+                        // Auto-select: the smallest QMK/Vial board whose free pins fit the matrix.
+                        const fits = Object.keys(boardProfiles)
+                            .filter(id => BOARD_META[id] && !isZmkOnly(id) && matrixPool(id).length >= requiredPins)
+                            .sort((a, b) => matrixPool(a).length - matrixPool(b).length);
+                        if (fits.length) { bestBoard = fits[0]; foundFit = true; }
                     }
-                    
-                    boardSelect.value = bestBoard;
+
+                    boardSelect.value = boardChoiceValue(bestBoard, isSplit);
 
                     // Pin Allocation:
                     // Split: allocate perHalfRows row pins + numLogicalCols col pins (per-MCU physical requirement)
                     // Monolithic: allocate numLogicalRows row pins + numLogicalCols col pins
                     let activeRows = [];
                     let activeCols = [];
+                    const linkPin = boardProfiles[bestBoard] ? linkPinOf(bestBoard) : null;
                     if (boardProfiles[bestBoard]) {
+                        const pr = boardProfiles[bestBoard], notLink = list => list.filter(pin => pin !== linkPin);
                         ({ rows: activeRows, cols: activeCols } = allocatePins(
-                            boardProfiles[bestBoard], isSplit ? perHalfRows : numLogicalRows, numLogicalCols));
+                            { rows: notLink(pr.rows), cols: notLink(pr.cols), pins: matrixPool(bestBoard) },
+                            isSplit ? perHalfRows : numLogicalRows, numLogicalCols));
                     }
 
                     // Build QMK JSON
@@ -469,6 +514,9 @@ const UNIT_SIZE = 55; // 1U = 55px
                         manufacturer: "Custom Handwired",
                         diode_direction: "COL2ROW",
                         split: isSplit,
+                        // how the two halves talk: TRRS serial pin (same on both halves) or wireless
+                        ...(isSplit ? { split_link: BOARD_META[bestBoard] && BOARD_META[bestBoard].link === "wireless"
+                            ? { type: "wireless" } : { type: "trrs", pin: linkPin } } : {}),
                         matrix_pins: {
                             rows: activeRows,
                             cols: activeCols
@@ -480,14 +528,15 @@ const UNIT_SIZE = 55; // 1U = 55px
                         }
                     };
 
-                    if (!foundFit) {
+                    if (!foundFit && !quietReroute) {
                         alert(`Warning: This layout requires ${perHalfRows} rows and ${numLogicalCols} columns per MCU (${requiredPins} pins). We selected ${bestBoard}, but it does not have enough pins!`);
                     }
 
+                    currentJSON._source = 'kle';
                     kleModal.style.display = 'none';
                     renderKeyboard();
                     exportVialZipBtn.style.display = 'inline-block';
-                    alert("KLE layout successfully imported and auto-routed!");
+                    if (!quietReroute) alert("KLE layout successfully imported and auto-routed!");
 
                 } catch (e) {
                     alert("Error parsing KLE data: " + e.message);
@@ -513,7 +562,7 @@ const UNIT_SIZE = 55; // 1U = 55px
                             const rowsMatch = jRows.every(r => profile.rows.includes(r));
                             const colsMatch = jCols.every(c => profile.cols.includes(c));
                             if (rowsMatch && colsMatch) {
-                                boardSelect.value = profileId;
+                                boardSelect.value = boardChoiceValue(profileId, !!(currentJSON.split && (currentJSON.split.enabled ?? true)));
                                 break; // Found a match, stop looking
                             }
                         }
@@ -696,7 +745,18 @@ const UNIT_SIZE = 55; // 1U = 55px
             }
         }
 
-        boardSelect.addEventListener('change', renderKeyboard);
+        // Changing the board re-routes an imported KLE layout for that board / keyboard type;
+        // a QMK file keeps its own wiring and pins.
+        boardSelect.addEventListener('change', () => {
+            if (currentJSON && currentJSON._source === 'kle' && lastKleText && boardSelect.value !== 'json_file') {
+                kleBoardSelect.value = boardSelect.value;
+                kleInput.value = lastKleText;
+                quietReroute = true;
+                try { processKleBtn.click(); } finally { quietReroute = false; }
+            } else {
+                renderKeyboard();
+            }
+        });
         showWiringCheckbox.addEventListener('change', renderKeyboard);
 
         viewToggle.addEventListener('click', () => {
@@ -1202,6 +1262,22 @@ const UNIT_SIZE = 55; // 1U = 55px
             amoebaLegend.style.display = 'block';
         }
 
+        // One line under the board dropdown: one controller, or two and how they're linked.
+        function renderBoardInfo(choice) {
+            const info = document.getElementById('boardInfo');
+            if (!info) return;
+            if (!currentJSON) { info.textContent = ''; return; }
+            const link = currentJSON.split_link;
+            const isSplit = !!(currentJSON.split && (currentJSON.split.enabled ?? true));
+            let text;
+            if (!isSplit) text = 'One controller for the whole keyboard.';
+            else if (link && link.type === 'wireless') text = 'Two controllers, one per half (same matrix pins on both); the halves talk wirelessly (ZMK).';
+            else if (link && link.pin) text = `Two controllers, one per half (same matrix pins on both); TRRS cable on ${link.pin} of each half, plus 5V and GND.`;
+            else text = 'Two controllers, one per half (same matrix pins on both).';
+            if (isZmkOnly(choice.id)) text += ' ⚠️ nRF52840 boards run ZMK, not QMK/Vial.';
+            info.textContent = text;
+        }
+
         function renderKeyboard() {
             if (!currentJSON) return;
 
@@ -1211,7 +1287,9 @@ const UNIT_SIZE = 55; // 1U = 55px
 
             let activeRows = [];
             let activeCols = [];
-            const selectedProfile = boardSelect.value;
+            const boardChoice = parseBoardChoice(boardSelect.value);
+            const selectedProfile = boardChoice.id;
+            renderBoardInfo(boardChoice);
 
             // Always prefer matrix_pins from the JSON (set by KLE import or uploaded file);
             // fall back to the raw board profile only when no matrix_pins are present.
@@ -1511,8 +1589,13 @@ const UNIT_SIZE = 55; // 1U = 55px
                 const activeCols  = matrixPins.cols || [];
                 const numRows     = activeRows.length;
                 const numCols     = activeCols.length;
-                const isSplit     = currentJSON.split || false;
-                const selectedProfile = boardSelect.value;
+                const isSplit     = !!(currentJSON.split && (currentJSON.split.enabled ?? true));
+                const selectedProfile = parseBoardChoice(boardSelect.value).id;
+                if (isZmkOnly(selectedProfile)) {
+                    alert('nice!nano / nRF52840 boards run ZMK, not QMK or Vial, so a Vial ZIP would never build. Pick an RP2040 or Pro Micro board, or set the board up in a ZMK config instead.');
+                    return;
+                }
+                const linkPin = currentJSON.split_link && currentJSON.split_link.pin;
 
                 // Logical matrix size. Split: QMK scans left rows then right rows, so
                 // MATRIX_ROWS = 2 x row pins per half (matrix_pins.rows lists one half).
@@ -1561,7 +1644,12 @@ const UNIT_SIZE = 55; // 1U = 55px
                 ].join('\n');
 
                 // Keyboard-level config.h
-                const splitLine = isSplit ? [
+                const splitLine = isSplit && linkPin ? [
+                    ``,
+                    `// Split keyboard: the halves talk half-duplex serial over the TRRS cable on ${linkPin}`,
+                    `// (set as split.serial in info.json). Wire tip/ring/sleeve the same on both halves.`,
+                    `#define SPLIT_USB_DETECT`,
+                ].join('\n') : isSplit ? [
                     ``,
                     `// Split keyboard — REQUIRED: configure your serial/TRRS communication pin`,
                     `// Uncomment and set the correct TX pin for your wiring:`,
@@ -1631,7 +1719,9 @@ const UNIT_SIZE = 55; // 1U = 55px
                     processor: mcuInfo.mcu,
                     bootloader: mcuInfo.boot,
                     diode_direction: diodeDirection,
-                    ...(isSplit ? { split: { enabled: true } } : {}),
+                    ...(isSplit ? { split: linkPin
+                        ? { enabled: true, serial: { driver: mcuInfo.mcu === 'RP2040' ? 'vendor' : 'bitbang', pin: linkPin } }
+                        : { enabled: true } } : {}),
                     matrix_pins: { rows: activeRows, cols: activeCols },
                     layouts: {
                         [layoutName]: {
