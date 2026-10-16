@@ -30,6 +30,22 @@
 4. Toggle the view to "Bottom (Wiring/Solder)" when you are ready to solder.
 5. Hover over any key to view the matrix positions and target pins.
 
+## Testing
+
+The wiring logic is covered by automated tests that run the real `cubify.js` (no browser needed, Node 18+):
+
+```bash
+npm test
+```
+
+They import `AliceZero.json` and generated split/monolithic layouts on every board profile, and check that:
+- every key gets a unique `[row, col]`, and rows run top→bottom, columns left→right;
+- no pin is used twice (a pin on a row *and* a column would short them) and no reserved pin is used;
+- each key shows the pins of its row and column, on both halves of a split;
+- each drawn wire connects exactly the keys of one row/column (never across split halves) and keeps one colour per pin;
+- the bottom (solder) view only mirrors positions — pins and wires are unchanged;
+- the exported `config.h`, `info.json` and `vial.json` match what's on screen, including split `MATRIX_ROWS` and a Vial unlock combo on keys that exist.
+
 ## Getting Started
 
 To test out the visualizer, you can use the provided `keyboard.json` or `splitkb_aurora_lily58_rev1_layout_*.json` files included in the project directory.

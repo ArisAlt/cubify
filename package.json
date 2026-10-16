@@ -1,0 +1,8 @@
+{
+  "name": "cubify",
+  "private": true,
+  "description": "Cubify — QMK handwiring visualizer",
+  "scripts": {
+    "test": "node --test tests/"
+  }
+}

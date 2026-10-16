@@ -54,6 +54,29 @@ const UNIT_SIZE = 55; // 1U = 55px
         const stage = document.getElementById('stage');
 
 
+        // Use the board's default row/col lists when the matrix fits them and they don't share a
+        // pin; otherwise take pins contiguously from the full pool (rows first, then cols).
+        // A pin is never handed out twice (a pin on a row AND a column shorts them).
+        function allocatePins(profile, rowsNeeded, colsNeeded) {
+            if (rowsNeeded <= profile.rows.length && colsNeeded <= profile.cols.length) {
+                const rows = profile.rows.slice(0, rowsNeeded);
+                const cols = profile.cols.slice(0, colsNeeded);
+                if (!cols.some(p => rows.includes(p))) return { rows, cols };
+            }
+            const pool = profile.pins || [...profile.rows, ...profile.cols];
+            return { rows: pool.slice(0, rowsNeeded), cols: pool.slice(rowsNeeded, rowsNeeded + colsNeeded) };
+        }
+
+        // Two keys that exist in the layout for the Vial unlock combo: [0,0]+[0,1] when present,
+        // otherwise the first two keys in row/column order.
+        function pickUnlockKeys(layout) {
+            const coords = layout.filter(k => k.matrix).map(k => k.matrix)
+                .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+            const has = (r, c) => coords.some(m => m[0] === r && m[1] === c);
+            if (has(0, 0) && has(0, 1)) return [[0, 0], [0, 1]];
+            return coords.length >= 2 ? [coords[0], coords[1]] : [[0, 0], [0, 1]];
+        }
+
         function extractLayout(jsonObj) {
             if (jsonObj && jsonObj.layouts && Object.keys(jsonObj.layouts).length > 0) {
                 const firstLayoutKey = Object.keys(jsonObj.layouts)[0];
@@ -319,10 +342,12 @@ const UNIT_SIZE = 55; // 1U = 55px
                     const centre30Lo = max_x * 0.35, centre30Hi = max_x * 0.65;
                     let sortedCenters = physicalLayout.map(k => (k.cx || (k.x||0) + (k.w||1)/2)).sort((a,b) => a-b);
                     let midpoint = max_x / 2;
+                    let widestGap = 0.5; // must beat ordinary 1u key spacing noise
                     for (let i = 0; i < sortedCenters.length - 1; i++) {
                         let gap = sortedCenters[i+1] - sortedCenters[i];
                         let gapCentre = (sortedCenters[i] + sortedCenters[i+1]) / 2;
-                        if (gapCentre > centre30Lo && gapCentre < centre30Hi && gap > 0.5) {
+                        if (gapCentre > centre30Lo && gapCentre < centre30Hi && gap > widestGap) {
+                            widestGap = gap;
                             midpoint = gapCentre;
                         }
                     }
@@ -338,21 +363,25 @@ const UNIT_SIZE = 55; // 1U = 55px
                             if (k.matrix[0] >= numLogicalRows) numLogicalRows = k.matrix[0] + 1;
                             if (k.matrix[1] >= numLogicalCols) numLogicalCols = k.matrix[1] + 1;
                         });
+                        if (isSplit) {
+                            // QMK split convention: right-half rows start at rows-per-half.
+                            perHalfRows = Math.ceil(numLogicalRows / 2);
+                            numLogicalRows = perHalfRows * 2;
+                        }
                     } else if (isSplit) {
                         // SPLIT keyboard: route each half independently.
-                        // Left half:  rows 0..R,   cols 0..C
-                        // Right half: rows R+1..2R, cols 0..C  (SAME column indices, new row range)
-                        // Each physical MCU only needs R row pins + C col pins.
+                        // Left half:  rows 0..R-1,  cols 0..C
+                        // Right half: rows R..2R-1, cols 0..C  (SAME column indices, new row range)
+                        // R = the larger half's row count, so both MCUs share one row-pin list.
                         if (manualKeys.length > 0) {
                             alert(`Notice: Found ${manualKeys.length} keys with manual matrix labels, but not all keys were labeled. Falling back to Auto-Router.`);
                         }
                         let resLeft  = gridRoute(leftHalves,  0, 0);
-                        let resRight = gridRoute(rightHalves, resLeft.numRows, 0);
-                        numLogicalRows = resLeft.numRows + resRight.numRows;
+                        let resRight = gridRoute(rightHalves, 0, 0);
+                        perHalfRows = Math.max(resLeft.numRows, resRight.numRows);
+                        rightHalves.forEach(k => { k.matrixRow += perHalfRows; k.matrix = [k.matrixRow, k.matrixCol]; });
+                        numLogicalRows = perHalfRows * 2;
                         numLogicalCols = Math.max(resLeft.numCols, resRight.numCols);
-                        // perHalfRows: how many row pins each MCU physically needs
-                        // (left and right assumed symmetric; use left half count)
-                        perHalfRows = resLeft.numRows;
                     } else {
                         // MONOLITHIC layout (Alice, standard TKL, etc.): route the full board as one piece.
                         if (manualKeys.length > 0) {
@@ -406,18 +435,8 @@ const UNIT_SIZE = 55; // 1U = 55px
                     let activeRows = [];
                     let activeCols = [];
                     if (boardProfiles[bestBoard]) {
-                        let profile = boardProfiles[bestBoard];
-                        let rowsNeeded = isSplit ? perHalfRows : numLogicalRows;
-                        let colsNeeded = numLogicalCols;
-                        if (rowsNeeded <= profile.rows.length && colsNeeded <= profile.cols.length) {
-                            activeRows = profile.rows.slice(0, rowsNeeded);
-                            activeCols = profile.cols.slice(0, colsNeeded);
-                        } else {
-                            // Dynamic contiguous allocation from full GPIO pool
-                            let allPins = profile.pins || [...profile.rows, ...profile.cols];
-                            activeRows = allPins.slice(0, rowsNeeded);
-                            activeCols = allPins.slice(rowsNeeded, rowsNeeded + colsNeeded);
-                        }
+                        ({ rows: activeRows, cols: activeCols } = allocatePins(
+                            boardProfiles[bestBoard], isSplit ? perHalfRows : numLogicalRows, numLogicalCols));
                     }
 
                     // Build QMK JSON
@@ -858,11 +877,12 @@ const UNIT_SIZE = 55; // 1U = 55px
                     const rowKey = side + "_" + normalizedRow;
                     const colKey = side + "_" + c;
 
-                    if (!rowGroups[rowKey]) rowGroups[rowKey] = [];
-                    if (!colGroups[colKey]) colGroups[colKey] = [];
+                    // pinIdx = position in a ribbon cable laid out rows first, then cols
+                    if (!rowGroups[rowKey]) rowGroups[rowKey] = { pinIdx: normalizedRow, pts: [] };
+                    if (!colGroups[colKey]) colGroups[colKey] = { pinIdx: activeRows.length + c, pts: [] };
 
-                    rowGroups[rowKey].push({x: cx, y: cy - ZONE});
-                    colGroups[colKey].push({x: cx, y: cy + ZONE});
+                    rowGroups[rowKey].pts.push({x: cx, y: cy - ZONE});
+                    colGroups[colKey].pts.push({x: cx, y: cy + ZONE});
 
                     if (!isBottomView && keycode) {
                         div.innerHTML = `<div class="keycode" title="${keycode}">${humanizeKeycode(keycode)}</div><div class="pins" style="color:${validation.errors.has(index) ? 'var(--accent)' : 'var(--text-sub)'}">[${r}, ${c}]</div>`;
@@ -943,7 +963,6 @@ const UNIT_SIZE = 55; // 1U = 55px
                     "rgba(186, 194, 222, 0.85)",  // Gray 
                     "rgba(255, 255, 255, 0.85)"   // White 
                 ];
-                let colorIndex = 0;
 
                 const drawChain = (pts, color, dash) => {
                     for (let i = 0; i < pts.length - 1; i++) {
@@ -964,22 +983,20 @@ const UNIT_SIZE = 55; // 1U = 55px
                     });
                 };
 
+                // Wire colour comes from the pin, so a row keeps its colour on both halves
+                // and colours follow a ribbon cable wired rows first, then cols.
+                const pinColor = idx => ribbonColors[idx % ribbonColors.length];
+
                 // Draw ROWS: Connect anchors left-to-right
                 Object.values(rowGroups).forEach(group => {
-                    if (group.length < 1) return;
-                    group.sort((a, b) => a.x - b.x);
-                    const color = ribbonColors[colorIndex % ribbonColors.length];
-                    drawChain(group, color, ""); // solid
-                    colorIndex++;
+                    group.pts.sort((a, b) => a.x - b.x);
+                    drawChain(group.pts, pinColor(group.pinIdx), ""); // solid
                 });
 
                 // Draw COLS: Connect anchors top-to-bottom
                 Object.values(colGroups).forEach(group => {
-                    if (group.length < 1) return;
-                    group.sort((a, b) => a.y - b.y);
-                    const color = ribbonColors[colorIndex % ribbonColors.length];
-                    drawChain(group, color, "10,6"); // dash
-                    colorIndex++;
+                    group.pts.sort((a, b) => a.y - b.y);
+                    drawChain(group.pts, pinColor(group.pinIdx), "10,6"); // dash
                 });
 
                 stage.appendChild(svg);
@@ -1008,13 +1025,10 @@ const UNIT_SIZE = 55; // 1U = 55px
                 const isSplit     = currentJSON.split || false;
                 const selectedProfile = boardSelect.value;
 
-                // Logical matrix size (split: 2x physical MCU rows)
-                let logicalRows = numRows;
-                if (isSplit) {
-                    let maxRow = 0;
-                    layout.forEach(k => { if (k.matrix && k.matrix[0] > maxRow) maxRow = k.matrix[0]; });
-                    logicalRows = maxRow + 1;
-                }
+                // Logical matrix size. Split: QMK scans left rows then right rows, so
+                // MATRIX_ROWS = 2 x row pins per half (matrix_pins.rows lists one half).
+                const logicalRows = isSplit ? numRows * 2 : numRows;
+                const unlock = pickUnlockKeys(layout);
 
                 // MCU detection from board profile
                 const mcuMap = {
@@ -1111,9 +1125,9 @@ const UNIT_SIZE = 55; // 1U = 55px
                     `/* Unique Vial keyboard ID */`,
                     `#define VIAL_KEYBOARD_UID {${uid}}`,
                     ``,
-                    `/* Unlock combo: hold [0,0]+[0,1] for ~3s to unlock security settings */`,
-                    `#define VIAL_UNLOCK_COMBO_ROWS { 0, 0 }`,
-                    `#define VIAL_UNLOCK_COMBO_COLS { 0, 1 }`,
+                    `/* Unlock combo: hold [${unlock[0]}]+[${unlock[1]}] for ~3s to unlock security settings */`,
+                    `#define VIAL_UNLOCK_COMBO_ROWS { ${unlock[0][0]}, ${unlock[1][0]} }`,
+                    `#define VIAL_UNLOCK_COMBO_COLS { ${unlock[0][1]}, ${unlock[1][1]} }`,
                 ].join('\n');
 
                 // info.json (QMK format)
@@ -1235,14 +1249,14 @@ const UNIT_SIZE = 55; // 1U = 55px
 ``,
 `## After Flashing`,
 `1. Open [Vial GUI](https://get.vial.today/download/) — your keyboard should be auto-detected.`,
-`2. Go to **Security → Unlock** and hold the top-left two keys (~3s) to unlock editing.`,
+`2. Go to **Security → Unlock** and hold the two unlock keys below (~3s) to unlock editing.`,
 `3. Remap keys, layers, macros — all in real time without reflashing.`,
 ``,
 `## Unlock Combo`,
 `| Key | Matrix |`,
 `|-----|--------|`,
-`| Key 1 | Row 0, Col 0 |`,
-`| Key 2 | Row 0, Col 1 |`,
+`| Key 1 | Row ${unlock[0][0]}, Col ${unlock[0][1]} |`,
+`| Key 2 | Row ${unlock[1][0]}, Col ${unlock[1][1]} |`,
                 ].join('\n');
 
                 // Assemble ZIP
