@@ -203,6 +203,10 @@
                 <input type="checkbox" id="showWiring"> Show Wiring
             </label>
 
+            <label title="Draw each key as an Amoeba Royale v2.0 single-key PCB (solder side) with pad-to-pad wiring. Also exports DIODE_DIRECTION ROW2COL, which the Amoeba's on-board diode requires." style="margin-left: 15px; display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--text-sub); font-size: 14px; font-weight: bold;">
+                <input type="checkbox" id="amoebaToggle"> 🧬 Amoeba PCBs
+            </label>
+
             <button id="viewToggle">👀 View: Top (Keycaps)</button>
             <button id="clearAllBtn" style="margin-left: 10px; background: var(--red, #f38ba8); color: #11111b; font-weight: bold;">🗑️ Clear All</button>
             <button id="exportVialZipBtn" style="margin-left: 10px; background: var(--green, #a6e3a1); color: #11111b; font-weight: bold; display: none;">📦 Export Vial ZIP</button>
@@ -212,7 +216,18 @@
 
     <div id="warningBanner" style="display:none; background: rgba(243, 139, 168, 0.2); border: 2px solid var(--accent); color: var(--accent); padding: 15px; border-radius: 8px; margin-top: 15px; font-weight: bold; text-align: center;"></div>
 
+    <div id="amoebaLayerBar" style="display:none; margin-top: 12px; gap: 16px; align-items: center; flex-wrap: wrap; color: var(--text-sub); font-size: 13px; font-weight: bold;">
+        <span>🧬 Show:</span>
+        <label style="display:flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" id="amoebaShowRows" checked> <span style="color:#cba6f7">Rows (R)</span></label>
+        <label style="display:flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" id="amoebaShowCols" checked> <span style="color:#89dceb">Columns (C)</span></label>
+        <label style="display:flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" id="amoebaShowLed" checked> <span style="color:#f9e2af">LED data</span></label>
+        <label style="display:flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" id="amoebaShowPower"> <span style="color:#f38ba8">LED power +/−</span></label>
+        <label style="display:flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" id="amoebaShowPads"> Unused pads</label>
+        <label style="display:flex;gap:6px;align-items:center;cursor:pointer">🔍 Size <input type="range" id="amoebaZoom" min="1" max="4" step="0.25" value="2"> <span id="amoebaZoomLabel">200%</span></label>
+        <span style="font-weight:normal;opacity:.8">Hover a key to trace its row, column and LED.</span>
+    </div>
     <div id="stage"></div>
+    <div id="amoebaLegend" style="display:none; margin-top: 12px; padding: 12px 15px; background: var(--panel-bg); border-radius: 8px; color: var(--text-sub); font-size: 13px; line-height: 1.7;"></div>
     <div id="tooltip"></div>
 
     <!-- Compile Instructions Modal (shown after Vial ZIP download) -->
@@ -301,6 +316,6 @@
         </div>
     </div>
 
-    <script src="cubify.js?v=4"></script>
+    <script src="cubify.js?v=8"></script>
 </body>
 </html>

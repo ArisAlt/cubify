@@ -23,6 +23,29 @@ const UNIT_SIZE = 55; // 1U = 55px
                 "waveshare_2040_plus":     { rows: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6","GP7","GP8","GP9"], cols: ["GP10","GP11","GP12","GP13","GP14","GP15","GP16","GP17","GP18","GP19","GP20","GP21","GP22","GP26","GP27","GP28"], pins: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6","GP7","GP8","GP9","GP10","GP11","GP12","GP13","GP14","GP15","GP16","GP17","GP18","GP19","GP20","GP21","GP22","GP26","GP27","GP28"], periph: {} }
             };
 
+            // Amoeba Royale v2.0 single-key PCB (github.com/mtl/keyboard-pcbs, CC0), seen from the
+            // SOLDER side (= Cubify's bottom view). Pad positions are % of the 18.8 x 18.1 mm board,
+            // taken from amoeba-royale.kicad_pcb and mirrored left-right. Every net has several pads
+            // so wires can leave in any direction. The on-board diode's anode is on the R (row) pad,
+            // so firmware must use DIODE_DIRECTION ROW2COL.
+            const AMOEBA = {
+                wMM: 18.8, hMM: 18.1,
+                pads: [
+                    { net: "SR",   x: 10.8, y: 7.4 },  { net: "SR",   x: 89.2, y: 7.4 },
+                    { net: "SC",   x: 25.7, y: 7.4 },  { net: "SC",   x: 77.4, y: 7.4 },
+                    { net: "SC",   x: 32.1, y: 93.0 }, { net: "SC",   x: 78.0, y: 93.0 },
+                    { net: "VDD",  x: 41.6, y: 7.0 },  { net: "VDD",  x: 10.8, y: 82.5 },
+                    { net: "VDD",  x: 89.2, y: 82.5 }, { net: "VDD",  x: 43.6, y: 93.0 },
+                    { net: "VSS",  x: 52.7, y: 7.0 },  { net: "VSS",  x: 10.8, y: 71.9 },
+                    { net: "VSS",  x: 89.2, y: 71.9 }, { net: "VSS",  x: 55.1, y: 93.0 },
+                    { net: "DIN",  x: 63.9, y: 7.4 },  { net: "DIN",  x: 9.8,  y: 36.8 },
+                    { net: "DIN",  x: 89.2, y: 93.0 },
+                    { net: "DOUT", x: 89.2, y: 20.4 }, { net: "DOUT", x: 66.6, y: 93.0 },
+                    { net: "DOUT", x: 10.8, y: 93.0 },
+                ],
+                colors: { SR: "#cba6f7", SC: "#89dceb", VDD: "#f38ba8", VSS: "#a6e3a1", DIN: "#f9e2af", DOUT: "#f9e2af" },
+            };
+
         const uploadInput = document.getElementById('upload');
         const qmkSearch = document.getElementById('qmkSearch');
         const fetchQmkBtn = document.getElementById('fetchQmkBtn');
@@ -246,8 +269,9 @@ const UNIT_SIZE = 55; // 1U = 55px
                                     y: Math.round(final_y * 1000) / 1000, 
                                     logical_x: x,
                                     logical_y: y,
-                                    w: w, 
-                                    h: h, 
+                                    w: w,
+                                    h: h,
+                                    rot: r,
                                     label: primaryLabel,
                                     matrixOverride: matrixOverride
                                 });
@@ -693,6 +717,236 @@ const UNIT_SIZE = 55; // 1U = 55px
             renderKeyboard();
         });
 
+        const amoebaToggle = document.getElementById('amoebaToggle');
+        const amoebaLegend = document.getElementById('amoebaLegend');
+        if (amoebaToggle) {
+            amoebaToggle.addEventListener('change', () => {
+                // Amoebas are wired on the solder side: jump to the bottom view with wiring on.
+                if (amoebaToggle.checked && !isBottomView) viewToggle.click();
+                else renderKeyboard();
+            });
+        }
+
+        // Layer switches + size slider for the Amoeba view (static in cubify.html).
+        const amoebaLayerBar = document.getElementById('amoebaLayerBar');
+        const amoebaZoom = document.getElementById('amoebaZoom');
+        const amoebaZoomLabel = document.getElementById('amoebaZoomLabel');
+        const AMOEBA_LAYER_IDS = { rows: 'amoebaShowRows', cols: 'amoebaShowCols', led: 'amoebaShowLed', power: 'amoebaShowPower', pads: 'amoebaShowPads' };
+        const amoebaLayers = () => Object.fromEntries(Object.entries(AMOEBA_LAYER_IDS)
+            .map(([k, id]) => [k, !!(document.getElementById(id) && document.getElementById(id).checked)]));
+        Object.values(AMOEBA_LAYER_IDS).forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('change', renderKeyboard);
+        });
+        if (amoebaZoom) amoebaZoom.addEventListener('input', renderKeyboard);
+        let amoebaSvg = null; // last drawn Amoeba layer, for hover highlighting
+
+        // Hover: keep the key's row, column and LED in/out bright, fade everything else.
+        function amoebaHighlight(g) {
+            if (!amoebaSvg) return;
+            const kids = Array.from(amoebaSvg.children);
+            if (!g) { kids.forEach(el => { el.style.opacity = ''; }); return; }
+            const attr = (el, k) => el.getAttribute ? el.getAttribute(k) : (el.attrs || {})[k];
+            const keep = new Set([String(g.index)]);
+            const wanted = el => {
+                const w = attr(el, 'data-wire');
+                if (!w) return false;
+                if (w === `row:${g.side}:${g.normRow}` || w === `col:${g.side}:${g.c}`) return true;
+                return /^(led|vdd|vss):/.test(w) && (attr(el, 'data-from') === String(g.index) || attr(el, 'data-to') === String(g.index));
+            };
+            kids.forEach(el => { if (wanted(el)) { keep.add(attr(el, 'data-from')); keep.add(attr(el, 'data-to')); } });
+            kids.forEach(el => {
+                const owner = attr(el, 'data-key') ?? attr(el, 'data-amoeba') ?? attr(el, 'data-led-key');
+                const on = attr(el, 'data-wire') ? wanted(el) : keep.has(owner);
+                el.style.opacity = on ? '1' : '0.12';
+            });
+        }
+
+        // First pool pin the matrix doesn't use: drives the LED chain's first DIN.
+        function pickLedPin(profileId, activeRows, activeCols) {
+            const profile = boardProfiles[profileId];
+            const used = new Set([...activeRows, ...activeCols]);
+            const pool = profile ? (profile.pins || [...profile.rows, ...profile.cols]) : [];
+            return pool.find(p => !used.has(p)) || null;
+        }
+
+        // Draw every key as an Amoeba Royale board and wire nets pad-to-pad.
+        // keyGeo: [{index, cx, cy, rot, side, normRow, c}] in draw (bottom-view) pixels.
+        function drawAmoebaLayer(svg, keyGeo, activeRows, ledPin, pinColor, layers) {
+            layers = layers || { rows: true, cols: true, led: true, power: true, pads: true };
+            const NS = "http://www.w3.org/2000/svg";
+            const s = UNIT_SIZE / 19.05; // px per mm
+            const padsOf = {};
+            keyGeo.forEach(k => {
+                // Bottom view mirrors X, so a key rotated +r on top is rotated -r here.
+                const a = -(k.rot || 0) * Math.PI / 180;
+                const place = (xp, yp) => {
+                    const dx = (xp / 100 - 0.5) * AMOEBA.wMM * s, dy = (yp / 100 - 0.5) * AMOEBA.hMM * s;
+                    return { x: k.cx + dx * Math.cos(a) - dy * Math.sin(a), y: k.cy + dx * Math.sin(a) + dy * Math.cos(a) };
+                };
+                const board = document.createElementNS(NS, "polygon");
+                board.setAttribute("points", [[0, 0], [100, 0], [100, 100], [0, 100]]
+                    .map(([x, y]) => { const p = place(x, y); return `${p.x},${p.y}`; }).join(" "));
+                board.setAttribute("fill", "rgba(17, 17, 27, 0.55)");
+                board.setAttribute("stroke", "#585b70");
+                board.setAttribute("stroke-width", "1");
+                board.setAttribute("data-amoeba", k.index);
+                svg.appendChild(board);
+                padsOf[k.index] = AMOEBA.pads.map(p => ({ net: p.net, used: false, ...place(p.x, p.y) }));
+            });
+
+            // pts.length === 2 → straight <line>; longer → routed <polyline> (end points stay on pads).
+            const line = (pts, color, width, dash, attrs) => {
+                const [a, b] = [pts[0], pts[pts.length - 1]];
+                const l = document.createElementNS(NS, pts.length === 2 ? "line" : "polyline");
+                if (pts.length === 2) {
+                    l.setAttribute("x1", a.x); l.setAttribute("y1", a.y);
+                    l.setAttribute("x2", b.x); l.setAttribute("y2", b.y);
+                } else {
+                    l.setAttribute("points", pts.map(p => `${p.x},${p.y}`).join(" "));
+                    l.setAttribute("fill", "none");
+                    l.setAttribute("stroke-linejoin", "round");
+                }
+                l.setAttribute("stroke", color);
+                l.setAttribute("stroke-width", width);
+                l.setAttribute("stroke-linecap", "round");
+                if (dash) l.setAttribute("stroke-dasharray", dash);
+                Object.entries(attrs).forEach(([k, v]) => l.setAttribute(k, v));
+                return l;
+            };
+            // Nearest pad pair between two keys (pads of one net are joined inside each board).
+            const link = (ka, netA, kb, netB) => {
+                let best = null;
+                padsOf[ka].filter(p => p.net === netA).forEach(pa =>
+                    padsOf[kb].filter(p => p.net === netB).forEach(pb => {
+                        const d = Math.hypot(pa.x - pb.x, pa.y - pb.y);
+                        if (!best || d < best.d) best = { a: pa, b: pb, d };
+                    }));
+                return best;
+            };
+            // Long jumps between rows would run as shallow diagonals on top of each other. Route
+            // them down → across → down instead, each in its own horizontal lane near the gap
+            // between the two pads. Every drawn segment is an obstacle for later lanes, so no
+            // two wires run along the same line (crossing at an angle is fine).
+            const obstacles = []; // drawn segments {a, b}
+            const LANE_GAP = 3;
+            const LANE_BAND = 0.3 * UNIT_SIZE; // lanes may spread this far either side of the gap
+            const distToSeg = (x, y, s) => {
+                const dx = s.b.x - s.a.x, dy = s.b.y - s.a.y, L = dx * dx + dy * dy || 1;
+                const t = Math.max(0, Math.min(1, ((x - s.a.x) * dx + (y - s.a.y) * dy) / L));
+                return Math.hypot(x - s.a.x - t * dx, y - s.a.y - t * dy);
+            };
+            // Length of a→b that runs within LANE_GAP of something already drawn.
+            const sharedLength = (a, b) => {
+                const len = Math.hypot(b.x - a.x, b.y - a.y), n = Math.max(2, Math.ceil(len));
+                let hits = 0;
+                for (let i = 0; i <= n; i++) {
+                    const x = a.x + (b.x - a.x) * i / n, y = a.y + (b.y - a.y) * i / n;
+                    if (obstacles.some(s => distToSeg(x, y, s) < LANE_GAP)) hits++;
+                }
+                return hits * len / n;
+            };
+            // Try down→across→down lanes first, then across→down→across (for pads stacked on one
+            // edge, e.g. LED + above LED −); keep the shape that shares the least with what's drawn.
+            const dogleg = (a, b) => {
+                let best = null;
+                const consider = pts => {
+                    let shared = 0;
+                    for (let j = 0; j < pts.length - 1; j++) shared += sharedLength(pts[j], pts[j + 1]);
+                    if (!best || shared < best.shared - 0.5) best = { pts, shared };
+                    return shared <= 4;
+                };
+                const midY = (a.y + b.y) / 2, midX = (a.x + b.x) / 2;
+                for (let d = 0; d <= LANE_BAND + 0.01; d += LANE_GAP) {
+                    for (const y of d ? [midY + d, midY - d] : [midY])
+                        if (consider([a, { x: a.x, y }, { x: b.x, y }, b])) return best.pts;
+                }
+                for (let d = 0; d <= LANE_BAND + 0.01; d += LANE_GAP) {
+                    for (const x of d ? [midX + d, midX - d] : [midX])
+                        if (consider([a, { x, y: a.y }, { x, y: b.y }, b])) return best.pts;
+                }
+                return best.pts;
+            };
+            const shape = (a, b, kind) => {
+                const dx = Math.abs(b.x - a.x), dy = Math.abs(b.y - a.y);
+                if (kind === "row") return [a, b]; // rows follow their row; they're routed first
+                if (kind === "col" && dx > 0.35 * UNIT_SIZE) return dogleg(a, b);
+                if (kind === "led" && Math.hypot(dx, dy) > 1.3 * UNIT_SIZE && dy > 0.3 * UNIT_SIZE) return dogleg(a, b);
+                if (sharedLength(a, b) > 6) return dogleg(a, b);
+                return [a, b];
+            };
+            const drawn = { vdd: [], vss: [], row: [], led: [], col: [] };
+            const chain = (seq, netA, netB, color, width, dash, wire) => {
+                const kind = wire.split(":")[0];
+                for (let i = 0; i < seq.length - 1; i++) {
+                    const b = link(seq[i].index, netA, seq[i + 1].index, netB);
+                    b.a.used = b.b.used = true;
+                    const pts = shape(b.a, b.b, kind);
+                    for (let j = 0; j < pts.length - 1; j++) obstacles.push({ a: pts[j], b: pts[j + 1] });
+                    drawn[kind].push(line(pts, color, width, dash, {
+                        "data-wire": wire, "data-from": seq[i].index, "data-to": seq[i + 1].index,
+                        "data-from-net": netA, "data-to-net": netB,
+                    }));
+                }
+            };
+            const groupBy = f => keyGeo.reduce((g, k) => ((g[f(k)] = g[f(k)] || []).push(k), g), {});
+
+            // LED chain per half: snake through the rows (L→R, then R→L, ...). VDD/VSS follow it.
+            const seqs = Object.entries(groupBy(k => k.side)).map(([side, keys]) => {
+                const byRow = {};
+                keys.forEach(k => (byRow[k.normRow] = byRow[k.normRow] || []).push(k));
+                const seq = [];
+                Object.keys(byRow).map(Number).sort((a, b) => a - b).forEach((r, i) =>
+                    seq.push(...byRow[r].sort((a, b) => (i % 2 ? b.cx - a.cx : a.cx - b.cx))));
+                return { side, seq };
+            });
+
+            // Routing priority: rows, LED data, columns, then power — each routes around what's
+            // already there. Stacking order (appended below): power underneath, rows, LED, columns.
+            // Matrix: rows along the top R pads, columns through the C pads (same colours as plain wiring).
+            if (layers.rows) Object.values(groupBy(k => k.side + "_" + k.normRow)).forEach(g =>
+                chain(g.sort((a, b) => a.cx - b.cx), "SR", "SR", pinColor(g[0].normRow), 3, "", `row:${g[0].side}:${g[0].normRow}`));
+            if (layers.led) seqs.forEach(({ side, seq }) =>
+                chain(seq, "DOUT", "DIN", AMOEBA.colors.DIN, 2, "2,3", `led:${side}`));
+            if (layers.cols) Object.values(groupBy(k => k.side + "_" + k.c)).forEach(g =>
+                chain(g.sort((a, b) => a.cy - b.cy), "SC", "SC", pinColor(activeRows.length + g[0].c), 3, "8,5", `col:${g[0].side}:${g[0].c}`));
+            if (layers.power) seqs.forEach(({ side, seq }) => {
+                chain(seq, "VDD", "VDD", AMOEBA.colors.VDD, 1.2, "", `vdd:${side}`);
+                chain(seq, "VSS", "VSS", AMOEBA.colors.VSS, 1.2, "", `vss:${side}`);
+            });
+            ["vdd", "vss", "row", "led", "col"].forEach(k => drawn[k].forEach(el => svg.appendChild(el)));
+
+            const chains = [];
+            seqs.forEach(({ side, seq }) => {
+                seq.forEach((k, n) => {
+                    if (!layers.led && n > 0) return; // L0 always shows where the LED pin goes
+                    const t = document.createElementNS(NS, "text");
+                    t.setAttribute("x", k.cx); t.setAttribute("y", k.cy + 5);
+                    t.setAttribute("text-anchor", "middle");
+                    t.setAttribute("font-size", "10"); t.setAttribute("font-weight", "bold");
+                    t.setAttribute("fill", AMOEBA.colors.DIN);
+                    t.setAttribute("data-led", n); t.setAttribute("data-led-key", k.index); t.setAttribute("data-led-side", side);
+                    t.textContent = n === 0 ? `L0 ◀ ${ledPin || "LED pin"}` : `L${n}`;
+                    svg.appendChild(t);
+                });
+                chains.push({ side: +side, count: seq.length, first: seq[0] && seq[0].index });
+            });
+
+            // Pads on top so they stay visible. Pads with a wire are drawn bold; the rest only
+            // when "Unused pads" is ticked, small and faint.
+            keyGeo.forEach(k => padsOf[k.index].forEach(p => {
+                if (!p.used && !layers.pads) return;
+                const c = document.createElementNS(NS, "circle");
+                c.setAttribute("cx", p.x); c.setAttribute("cy", p.y); c.setAttribute("r", p.used ? "2.8" : "1.6");
+                c.setAttribute("fill", AMOEBA.colors[p.net]);
+                if (!p.used) c.setAttribute("fill-opacity", "0.45");
+                c.setAttribute("data-pad", p.net); c.setAttribute("data-key", k.index);
+                if (p.used) c.setAttribute("data-used", "1");
+                svg.appendChild(c);
+            }));
+            return chains;
+        }
+
         document.addEventListener('mousemove', function(e) {
             if (tooltip.style.display === 'block') {
                 tooltip.style.left = (e.clientX + 15) + 'px';
@@ -738,6 +992,20 @@ const UNIT_SIZE = 55; // 1U = 55px
             }
             
             return { errors: errors, hardwareError: hardwareError };
+        }
+
+        function renderAmoebaLegend(chains, ledPin, activeRows, activeCols) {
+            if (!amoebaLegend) return;
+            const total = chains.reduce((n, c) => n + c.count, 0);
+            const sw = (color, dash) => `<span style="display:inline-block;width:26px;height:0;border-top:3px ${dash ? 'dashed' : 'solid'} ${color};vertical-align:middle;margin-right:6px"></span>`;
+            const perHalf = chains.length > 1 ? ` (${chains.map(c => (c.side ? 'right ' : 'left ') + c.count).join(', ')} — one chain per half)` : '';
+            amoebaLegend.innerHTML = [
+                `<b>🧬 Amoeba Royale v2.0 — solder side.</b> Pads: <span style="color:${AMOEBA.colors.SR}">● R row</span> · <span style="color:${AMOEBA.colors.SC}">● C column</span> · <span style="color:${AMOEBA.colors.VDD}">● LED +</span> · <span style="color:${AMOEBA.colors.VSS}">● LED −</span> · <span style="color:${AMOEBA.colors.DIN}">● LED data in/out</span>`,
+                `${sw('#cdd6f4')}Row wires: R pad → R pad, to row pins ${activeRows.join(', ')}. ${sw('#cdd6f4', true)}Column wires: C pad → C pad, to column pins ${activeCols.join(', ')}.`,
+                `<span style="color:${AMOEBA.colors.DIN}">LED data</span>: DOUT → next DIN along the numbers L0 → L${Math.max(total - 1, 0)}${perHalf}. L0's DIN goes to <b>${ledPin || 'a free pin (none left on this board)'}</b>. LED + / − run along the same path; feed + from 5 V (VBUS), − from GND.`,
+                `⚠️ The Amoeba's diode makes this <b>ROW2COL</b> — the Vial export switches to it while this box is ticked. ${total} SK6812MINI LEDs can draw up to ~${(total * 0.06).toFixed(1)} A at full white: cap brightness (RGB_MATRIX_MAXIMUM_BRIGHTNESS) to stay within USB's 0.5 A.`,
+            ].join('<br>');
+            amoebaLegend.style.display = 'block';
         }
 
         function renderKeyboard() {
@@ -826,6 +1094,8 @@ const UNIT_SIZE = 55; // 1U = 55px
             let rowGroups = {};
             let colGroups = {};
             let encoderPositions = [];
+            let keyGeo = []; // per-key draw centre + matrix info, for the Amoeba layer
+            const amoebaMode = !!(amoebaToggle && amoebaToggle.checked && isBottomView);
 
             layout.forEach((key, index) => {
                 const div = document.createElement('div');
@@ -883,8 +1153,15 @@ const UNIT_SIZE = 55; // 1U = 55px
 
                     rowGroups[rowKey].pts.push({x: cx, y: cy - ZONE});
                     colGroups[colKey].pts.push({x: cx, y: cy + ZONE});
+                    const geo = { index, cx, cy, rot: key.rot || 0, side, normRow: normalizedRow, c };
+                    keyGeo.push(geo);
+                    div.addEventListener('mouseenter', () => { if (amoebaMode) amoebaHighlight(geo); });
+                    div.addEventListener('mouseleave', () => { if (amoebaMode) amoebaHighlight(null); });
 
-                    if (!isBottomView && keycode) {
+                    if (amoebaMode) {
+                        // Amoeba view: keep only a small, faint [row, col]; pins are in the tooltip/legend.
+                        div.innerHTML = `<div class="matrix" style="font-size:9px;opacity:0.45;position:absolute;top:1px;left:3px">[${r}, ${c}]</div>`;
+                    } else if (!isBottomView && keycode) {
                         div.innerHTML = `<div class="keycode" title="${keycode}">${humanizeKeycode(keycode)}</div><div class="pins" style="color:${validation.errors.has(index) ? 'var(--accent)' : 'var(--text-sub)'}">[${r}, ${c}]</div>`;
                     } else {
                         let matrixColor = validation.errors.has(index) ? "color: var(--accent);" : "";
@@ -941,8 +1218,15 @@ const UNIT_SIZE = 55; // 1U = 55px
                 stage.appendChild(div);
             });
 
-            // Draw Wiring SVG if enabled
-            if (showWiringCheckbox.checked) {
+            // Draw Wiring SVG if enabled (always in Amoeba mode)
+            if (amoebaLegend) amoebaLegend.style.display = 'none';
+            if (amoebaLayerBar) amoebaLayerBar.style.display = amoebaMode ? 'flex' : 'none';
+            amoebaSvg = null;
+            // Size slider: CSS zoom enlarges the drawing (and its layout box) only in Amoeba view.
+            const zoom = amoebaMode && amoebaZoom ? parseFloat(amoebaZoom.value) || 1 : 1;
+            stage.style.zoom = zoom === 1 ? '' : String(zoom);
+            if (amoebaZoomLabel) amoebaZoomLabel.textContent = Math.round(zoom * 100) + '%';
+            if (showWiringCheckbox.checked || amoebaMode) {
                 const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
                 svg.style.position = "absolute";
                 svg.style.top = "0";
@@ -987,6 +1271,17 @@ const UNIT_SIZE = 55; // 1U = 55px
                 // and colours follow a ribbon cable wired rows first, then cols.
                 const pinColor = idx => ribbonColors[idx % ribbonColors.length];
 
+                if (amoebaMode) {
+                    const ledPin = pickLedPin(selectedProfile, activeRows, activeCols);
+                    const chains = drawAmoebaLayer(svg, keyGeo, activeRows, ledPin, pinColor, amoebaLayers());
+                    amoebaSvg = svg;
+                    stage.appendChild(svg);
+                    renderAmoebaLegend(chains, ledPin, activeRows, activeCols);
+                    stage.style.width = (max_x_logical * UNIT_SIZE + 20) + 'px';
+                    stage.style.height = Math.max(max_y * UNIT_SIZE + 20, 250) + 'px';
+                    return;
+                }
+
                 // Draw ROWS: Connect anchors left-to-right
                 Object.values(rowGroups).forEach(group => {
                     group.pts.sort((a, b) => a.x - b.x);
@@ -1029,6 +1324,8 @@ const UNIT_SIZE = 55; // 1U = 55px
                 // MATRIX_ROWS = 2 x row pins per half (matrix_pins.rows lists one half).
                 const logicalRows = isSplit ? numRows * 2 : numRows;
                 const unlock = pickUnlockKeys(layout);
+                // Amoeba Royale's on-board diode has its anode on the row pad → ROW2COL.
+                const diodeDirection = (amoebaToggle && amoebaToggle.checked) ? 'ROW2COL' : 'COL2ROW';
 
                 // MCU detection from board profile
                 const mcuMap = {
@@ -1090,7 +1387,7 @@ const UNIT_SIZE = 55; // 1U = 55px
                     `#define MATRIX_COLS ${numCols}`,
                     `#define MATRIX_ROW_PINS { ${activeRows.join(', ')} }`,
                     `#define MATRIX_COL_PINS { ${activeCols.join(', ')} }`,
-                    `#define DIODE_DIRECTION COL2ROW${splitLine}`,
+                    `#define DIODE_DIRECTION ${diodeDirection}${splitLine}`,
                 ].join('\n');
 
                 // keyboard.h
@@ -1139,7 +1436,7 @@ const UNIT_SIZE = 55; // 1U = 55px
                     usb: { vid: '0xFEED', pid: '0x0000', device_version: '0.0.1' },
                     processor: mcuInfo.mcu,
                     bootloader: mcuInfo.boot,
-                    diode_direction: 'COL2ROW',
+                    diode_direction: diodeDirection,
                     ...(isSplit ? { split: { enabled: true } } : {}),
                     matrix_pins: { rows: activeRows, cols: activeCols },
                     layouts: {

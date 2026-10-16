@@ -21,6 +21,9 @@
   - **💾 Save JSON**: Instantly inject your encoder and I2C pin assignments into your `keyboard.json` and download the updated layout file.
   - **📄 Copy C Code**: Generates standard QMK `encoder_update_user` boilerplate for your `keymap.c` file based on your assigned encoders.
 - **Standalone App**: Entirely contained in a single HTML file—no server or installation required.
+- **🧬 Amoeba PCBs layer**: draws every key as an [Amoeba Royale v2.0](https://github.com/mtl/keyboard-pcbs/tree/master/amoeba-royale) single-key PCB on the solder side, with pads in their real positions (rotated with angled keys) and pad-to-pad wiring: rows on the R pads, columns on the C pads, and the per-key LED chain (DOUT → DIN, numbered L0…Ln, one chain per split half) with LED +/− following it. The first LED's data pin is the first free MCU pin. While ticked, the Vial export uses `DIODE_DIRECTION ROW2COL`, because the Amoeba's on-board diode has its anode on the R pad.
+  - **Readable by design:** layer switches (Rows · Columns · LED data · LED power · Unused pads; power and unused pads off by default), a 🔍 size slider (100–400%), and hover tracing — point at a key to see only its row, column and LED neighbours.
+  - **No wires on top of each other:** long column jumps and LED hops are routed down → across → down, each in its own lane, around everything already drawn.
 
 ## Usage
 
@@ -44,7 +47,8 @@ They import `AliceZero.json` and generated split/monolithic layouts on every boa
 - each key shows the pins of its row and column, on both halves of a split;
 - each drawn wire connects exactly the keys of one row/column (never across split halves) and keeps one colour per pin;
 - the bottom (solder) view only mirrors positions — pins and wires are unchanged;
-- the exported `config.h`, `info.json` and `vial.json` match what's on screen, including split `MATRIX_ROWS` and a Vial unlock combo on keys that exist.
+- the exported `config.h`, `info.json` and `vial.json` match what's on screen, including split `MATRIX_ROWS` and a Vial unlock combo on keys that exist;
+- in the Amoeba layer, every wire joins pads of the same net (no shorts), rows/columns follow the matrix, the LED chain visits every key once DOUT → DIN, boards turn with angled keys, the export switches to ROW2COL, no two wires run on top of each other (AliceZero, test2, Lily58-style), and the layer switches, hover tracing and size slider behave.
 
 ## Getting Started
 

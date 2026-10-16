@@ -48,6 +48,9 @@ function load({ split = false, board = "auto" } = {}) {
     class FileReader { readAsText(f) { this.onload({ target: { result: f.text } }); } }
     const URL = { createObjectURL: () => "blob:", revokeObjectURL() {} };
     byId("boardSelect").value = "json_file";
+    // Same defaults as cubify.html's Amoeba layer bar.
+    for (const id of ["amoebaShowRows", "amoebaShowCols", "amoebaShowLed"]) byId(id).checked = true;
+    byId("amoebaZoom").value = "2";
     byId("kleIsSplit").value = split ? "true" : "false";
     byId("kleBoardSelect").value = board;
 
@@ -74,10 +77,39 @@ function uploadJSON(obj, opts = {}) {
     return ctx;
 }
 
-function setView(ctx, { bottom = false, wiring = true } = {}) {
+function setView(ctx, { bottom = false, wiring = true, amoeba = false, layers = null } = {}) {
+    const amoebaBox = ctx.byId("amoebaToggle");
+    amoebaBox.checked = amoeba;
+    const ids = { rows: "amoebaShowRows", cols: "amoebaShowCols", led: "amoebaShowLed", power: "amoebaShowPower", pads: "amoebaShowPads" };
+    if (layers) for (const [k, id] of Object.entries(ids)) ctx.byId(id).checked = !!layers[k];
     if (ctx.app.isBottomView !== bottom) ctx.byId("viewToggle").click();
     ctx.byId("showWiring").checked = wiring;
     ctx.app.renderKeyboard();
+}
+
+/** Amoeba layer: boards, pads (net/key/pos), wire segments and LED labels. */
+function readAmoeba(ctx) {
+    const svg = ctx.byId("stage").children.find(c => c.tagName === "svg");
+    if (!svg) return null;
+    const kids = svg.children;
+    return {
+        boards: kids.filter(c => c.tagName === "polygon" && c.attrs["data-amoeba"] !== undefined)
+            .map(c => ({ key: +c.attrs["data-amoeba"], pts: c.attrs.points.split(" ").map(p => p.split(",").map(Number)) })),
+        pads: kids.filter(c => c.tagName === "circle" && c.attrs["data-pad"])
+            .map(c => ({ net: c.attrs["data-pad"], key: +c.attrs["data-key"], x: px(c.attrs.cx), y: px(c.attrs.cy) })),
+        wires: kids.filter(c => (c.tagName === "line" || c.tagName === "polyline") && c.attrs["data-wire"]).map(l => {
+            const path = l.tagName === "line"
+                ? [[px(l.attrs.x1), px(l.attrs.y1)], [px(l.attrs.x2), px(l.attrs.y2)]]
+                : l.attrs.points.split(" ").map(p => p.split(",").map(Number));
+            return {
+                wire: l.attrs["data-wire"], from: +l.attrs["data-from"], to: +l.attrs["data-to"],
+                fromNet: l.attrs["data-from-net"], toNet: l.attrs["data-to-net"],
+                a: path[0], b: path[path.length - 1], path,
+            };
+        }),
+        leds: kids.filter(c => c.tagName === "text" && c.attrs["data-led"] !== undefined)
+            .map(t => ({ n: +t.attrs["data-led"], key: +t.attrs["data-led-key"], side: +t.attrs["data-led-side"], text: t.textContent })),
+    };
 }
 
 const px = s => parseFloat(String(s));
@@ -147,4 +179,4 @@ async function exportZip(ctx) {
     return files;
 }
 
-module.exports = { load, importKLE, uploadJSON, setView, readKeys, readWires, wireGroups, parseConfigH, exportZip, UNIT, ZONE };
+module.exports = { load, importKLE, uploadJSON, setView, readAmoeba, readKeys, readWires, wireGroups, parseConfigH, exportZip, UNIT, ZONE };
