@@ -1,7 +1,7 @@
-# GEMINI Project Context
+# Cubify — Project Context
 
 ## Project Description
-**QMK Wiring Visualizer 2.0** is an interactive web tool that helps users physically handwire custom keyboards by mapping QMK JSON configurations to specific microcontroller pins. It is contained entirely within `KeyVisualizer_v2.html`.
+**Cubify** is an interactive web tool that helps users physically handwire custom keyboards by mapping QMK JSON configurations to specific microcontroller pins. It lives in `cubify.html` (UI/CSS) + `cubify.js` (logic). GitHub: https://github.com/ArisAlt/cubify
 
 ## AI Instructions
 - Always prioritize and update `README.md` and `scaffold.md` when structural or feature changes occur.

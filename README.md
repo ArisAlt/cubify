@@ -1,8 +1,8 @@
-# QMK Wiring Visualizer 2.0 (Handwire Edition)
+# Cubify — QMK Handwiring Visualizer
 
 ## Description
 
-The **QMK Wiring Visualizer 2.0** is a web-based, single-page application designed to simplify the process of handwiring custom keyboards. It reads QMK keyboard configuration JSON files and visually maps the physical layout directly to microcontroller pins. This tool bridges the gap between digital configurations and the physical soldering process.
+**Cubify** is a web-based, single-page application designed to simplify the process of handwiring custom keyboards. It reads QMK keyboard configuration JSON files and visually maps the physical layout directly to microcontroller pins. This tool bridges the gap between digital configurations and the physical soldering process.
 
 ## Features
 
@@ -24,7 +24,7 @@ The **QMK Wiring Visualizer 2.0** is a web-based, single-page application design
 
 ## Usage
 
-1. Open `KeyVisualizer_v2.html` in any modern web browser.
+1. Open `cubify.html` in any modern web browser.
 2. Click the file input to upload your `keyboard.json` layout file.
 3. Select your microcontroller profile from the dropdown.
 4. Toggle the view to "Bottom (Wiring/Solder)" when you are ready to solder.
@@ -33,7 +33,7 @@ The **QMK Wiring Visualizer 2.0** is a web-based, single-page application design
 ## Getting Started
 
 To test out the visualizer, you can use the provided `keyboard.json` or `splitkb_aurora_lily58_rev1_layout_*.json` files included in the project directory.
-markdown_content = """# ⌨️ Lily58 Zero (Handwired)
+## ⌨️ Reference Build: Lily58 Zero (Handwired)
 
 Welcome to the **Lily58 Zero** repository. This is a custom, handwired split keyboard powered by the RP2040 microcontroller. 
 

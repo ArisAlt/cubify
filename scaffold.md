@@ -1,13 +1,16 @@
 # Project Scaffold
 
-This document outlines the file structure and key components of the **QMK Wiring Visualizer 2.0** project.
+This document outlines the file structure and key components of the **Cubify** project.
 
 ## Directory Structure
 
 ```text
-lily58_zero/
+cubify/
 │
-├── KeyVisualizer_v2.html     # Main Application File (HTML/CSS/JS)
+├── cubify.html               # Main Application File (HTML/CSS)
+├── cubify.js                 # Application Logic
+├── skills/keyboard-handwiring/  # Public Claude Agent Skill (MIT), own git repo: github.com/ArisAlt/keyboard-handwiring-skill
+├── skills/keyboard-handwiring.skill  # Packaged skill (upload/install)
 ├── README.md                 # Project Overview and Usage Instructions
 ├── scaffold.md               # Project Structure and Organization
 ├── GEMINI.md                 # AI Context and Instructions File
@@ -22,7 +25,7 @@ lily58_zero/
 
 ## Key Components
 
-### 1. Main Application (`KeyVisualizer_v2.html`)
+### 1. Main Application (`cubify.html` + `cubify.js`)
 A single HTML file containing:
 - **UI Structure**: File upload, MCU selection, view toggle button, and keyboard stage.
 - **Styling**: Modern, dark-themed CSS with clear visual feedback for interactive elements.

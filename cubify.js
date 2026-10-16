@@ -7,13 +7,20 @@ const UNIT_SIZE = 55; // 1U = 55px
             // Board profiles: `rows` and `cols` are the DEFAULT pin segregation.
             // `pins` is the FULL pool of usable GPIOs — used for dynamic allocation
             // when the matrix is asymmetric (e.g. more cols than the cols array has).
+            // Pin data verified against QMK/ZMK docs and the Raspberry Pi/Waveshare pinouts
+            // (see skills/keyboard-handwiring/references/boards.json). Never put a reserved pin in
+            // rows/cols/pins: rp2040_zero GP16 = onboard WS2812, pro_micro B7 = not broken out,
+            // waveshare_2040_plus GP29 = VSYS sense (not on the header).
+            // rp2040_zero: `pins` is the 20 castellated edge GPIOs; GP17-25 are underside pads and are left out.
+            // pro_micro: all 18 pool pins are used by the default layout; there is no spare pin for enc2_b, so enc2 is omitted.
+            // rp2040_tiny: pin list is UNVERIFIED against Waveshare's pinout - check the silkscreen/wiki before wiring.
             const boardProfiles = {
-                "rp2040_zero":            { rows: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6"], cols: ["GP21","GP20","GP19","GP18","GP17","GP16","GP15","GP14","GP13","GP12"], pins: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6","GP7","GP8","GP9","GP10","GP11","GP12","GP13","GP14","GP15","GP16","GP17","GP18","GP19","GP20","GP21","GP26","GP27","GP28","GP29"], periph: { sda: "GP26", scl: "GP27", enc_a: "GP28", enc_b: "GP29", enc2_a: "GP7", enc2_b: "GP8" } },
+                "rp2040_zero":            { rows: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6"], cols: ["GP15","GP14","GP13","GP12","GP11","GP10","GP9"], pins: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6","GP7","GP8","GP9","GP10","GP11","GP12","GP13","GP14","GP15","GP26","GP27","GP28","GP29"], periph: { sda: "GP26", scl: "GP27", enc_a: "GP28", enc_b: "GP29", enc2_a: "GP7", enc2_b: "GP8" } },
                 "rp2040_tiny":            { rows: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6"], cols: ["GP10","GP9","GP8","GP7","GP6","GP5","GP4","GP3","GP2","GP1"], pins: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6","GP7","GP8","GP9","GP10","GP11","GP12","GP13","GP14","GP15","GP26","GP27","GP28","GP29"], periph: { sda: "GP26", scl: "GP27", enc_a: "GP28", enc_b: "GP29", enc2_a: "GP14", enc2_b: "GP15" } },
-                "pro_micro":              { rows: ["D4","C6","D7","E6","B4","B5"], cols: ["F4","F5","F6","F7","B1","B3","B2"], pins: ["D4","C6","D7","E6","B4","B5","F4","F5","F6","F7","B1","B3","B2","D2","D3","B6","B7"], periph: { sda: "D1", scl: "D0", enc_a: "D2", enc_b: "D3", enc2_a: "B6", enc2_b: "B7" } },
+                "pro_micro":              { rows: ["D4","C6","D7","E6","B4","B5"], cols: ["F4","F5","F6","F7","B1","B3","B2"], pins: ["D4","C6","D7","E6","B4","B5","F4","F5","F6","F7","B1","B3","B2","D2","D3","B6","D1","D0"], periph: { sda: "D1", scl: "D0", enc_a: "D2", enc_b: "D3" } },
                 "nice_nano":              { rows: ["P0.06","P0.08","P0.17","P0.20","P0.22","P0.24"], cols: ["P0.31","P0.29","P0.02","P1.15","P1.13","P1.11","P0.10"], pins: ["P0.06","P0.08","P0.17","P0.20","P0.22","P0.24","P0.31","P0.29","P0.02","P1.15","P1.13","P1.11","P0.10","P0.09","P1.00","P0.11","P1.02","P1.04","P1.06"], periph: { sda: "P1.04", scl: "P1.06", enc_a: "P0.09", enc_b: "P1.00", enc2_a: "P0.11", enc2_b: "P1.02" } },
                 "nrf52840_nicenano_clone": { rows: ["P0.06","P0.08","P0.17","P0.20","P0.22","P0.24"], cols: ["P0.31","P0.29","P0.02","P1.15","P1.13","P1.11","P0.10"], pins: ["P0.06","P0.08","P0.17","P0.20","P0.22","P0.24","P0.31","P0.29","P0.02","P1.15","P1.13","P1.11","P0.10","P0.09","P1.00","P0.11","P1.02","P1.04","P1.06"], periph: { sda: "P1.04", scl: "P1.06", enc_a: "P0.09", enc_b: "P1.00", enc2_a: "P0.11", enc2_b: "P1.02" } },
-                "waveshare_2040_plus":     { rows: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6","GP7","GP8","GP9"], cols: ["GP10","GP11","GP12","GP13","GP14","GP15","GP16","GP17","GP18","GP19","GP20","GP21","GP22","GP26","GP27","GP28","GP29"], pins: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6","GP7","GP8","GP9","GP10","GP11","GP12","GP13","GP14","GP15","GP16","GP17","GP18","GP19","GP20","GP21","GP22","GP26","GP27","GP28","GP29"], periph: {} }
+                "waveshare_2040_plus":     { rows: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6","GP7","GP8","GP9"], cols: ["GP10","GP11","GP12","GP13","GP14","GP15","GP16","GP17","GP18","GP19","GP20","GP21","GP22","GP26","GP27","GP28"], pins: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6","GP7","GP8","GP9","GP10","GP11","GP12","GP13","GP14","GP15","GP16","GP17","GP18","GP19","GP20","GP21","GP22","GP26","GP27","GP28"], periph: {} }
             };
 
         const uploadInput = document.getElementById('upload');
@@ -1036,7 +1043,7 @@ const UNIT_SIZE = 55; // 1U = 55px
                 const keymapArgs = layout.map(() => 'KC_TRNS').join(', ');
                 const keymapC = [
                     `// SPDX-License-Identifier: GPL-2.0-or-later`,
-                    `// Auto-generated by QMK Wiring Visualizer 2.0`,
+                    `// Auto-generated by Cubify`,
                     ``,
                     `#include QMK_KEYBOARD_H`,
                     ``,
@@ -1062,7 +1069,7 @@ const UNIT_SIZE = 55; // 1U = 55px
                 ].join('\n') : '';
                 const configH = [
                     `// SPDX-License-Identifier: GPL-2.0-or-later`,
-                    `// Auto-generated by QMK Wiring Visualizer 2.0`,
+                    `// Auto-generated by Cubify`,
                     `#pragma once`,
                     ``,
                     `#define MATRIX_ROWS ${logicalRows}`,
@@ -1082,7 +1089,7 @@ const UNIT_SIZE = 55; // 1U = 55px
 
                 // Keyboard-level rules.mk — MCU only, NO VIA/VIAL
                 const rulesMk = [
-                    `# Auto-generated by QMK Wiring Visualizer 2.0`,
+                    `# Auto-generated by Cubify`,
                     `# DO NOT add VIA_ENABLE/VIAL_ENABLE here — put in keymaps/vial/rules.mk`,
                     ``,
                     `MCU = ${mcuInfo.mcu}`,
@@ -1187,7 +1194,7 @@ const UNIT_SIZE = 55; // 1U = 55px
                 // INSTALL.md — compile instructions bundled with the ZIP
                 const installMd = [
 `# ${kbName} — Vial Firmware: Compile & Flash Guide`,
-`> Auto-generated by QMK Wiring Visualizer 2.0`,
+`> Auto-generated by Cubify`,
 ``,
 `## Prerequisites`,
 `- A working [QMK build environment](https://docs.qmk.fm/#/newbs_getting_started)`,
