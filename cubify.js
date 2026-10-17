@@ -84,6 +84,8 @@ const UNIT_SIZE = 55; // 1U = 55px
             clearAllBtn.addEventListener('click', () => {
                 currentJSON = null;
                 stage.innerHTML = '';
+                const notice = document.getElementById('splitNotice');
+                if (notice) notice.style.display = 'none';
                 const existingSvg = document.getElementById('routingLayer');
                 if (existingSvg) existingSvg.remove();
                 warningBanner.style.display = 'none';
@@ -98,6 +100,19 @@ const UNIT_SIZE = 55; // 1U = 55px
         const tooltip = document.getElementById('tooltip');
         const stage = document.getElementById('stage');
 
+
+        // The right controller's pins: its own list when the board has one (a QMK file's
+        // split.matrix_pins.right, or the "flipped" wiring choice), else the shared list.
+        function rightHalfPins() {
+            if (!currentJSON) return null;
+            if (currentJSON.matrix_pins_right) return currentJSON.matrix_pins_right;
+            const sp = currentJSON.split;
+            return (sp && typeof sp === "object" && sp.matrix_pins && sp.matrix_pins.right) || null;
+        }
+        function pinsFor(side, activeRows, activeCols) {
+            const rp = side ? rightHalfPins() : null;
+            return { rows: (rp && rp.rows) || activeRows, cols: (rp && rp.cols) || activeCols };
+        }
 
         // Column numbers follow the PHYSICAL order of the columns (average key x), not the order
         // the router created them in (a collision can add a column index after the outer one).
@@ -421,6 +436,8 @@ const UNIT_SIZE = 55; // 1U = 55px
                     let perHalfRows = 0; // Only meaningful for split keyboards (rows per MCU)
 
                     const kleChoice = parseBoardChoice(kleBoardSelect.value);
+                    const wiringMode = (rightHalfWiring && rightHalfWiring.value) || "mirrored";
+                    let rightColCount = 0;
                     const isSplit = kleChoice.split;
                     lastKleText = rawText;
 
@@ -467,13 +484,19 @@ const UNIT_SIZE = 55; // 1U = 55px
                         let resLeft  = gridRoute(leftHalves,  0, 0);
                         let resRight = gridRoute(rightHalves, 0, 0);
                         perHalfRows = Math.max(resLeft.numRows, resRight.numRows);
-                        // Both controllers run the same pin list (QMK MATRIX_ROW/COL_PINS). "Mirrored":
-                        // the right half's OUTER column is col 0 like the left's, so each pin wires to
-                        // the matching column of a mirror-image half. "Same direction": col 0 is the
-                        // leftmost column on both halves.
-                        const mirrorRight = !rightHalfWiring || rightHalfWiring.value !== "same";
+                        // Right-half conventions (all valid in QMK; the firmware must match the wiring):
+                        //  "mirrored" — same pin list; the right half's OUTER column is col 0 like the
+                        //               left's, so each pin wires to the matching column of a
+                        //               mirror-image half (QMK lily58/rev1, sofle).
+                        //  "same"     — same pin list; col 0 is the leftmost column on both halves
+                        //               (QMK handwired/dactyl_manuform).
+                        //  "flipped"  — numbered like "same", but wired mirror-image anyway; the
+                        //               firmware gets a reversed right-hand column list
+                        //               (split.matrix_pins.right / MATRIX_COL_PINS_RIGHT, like iris rev8).
+                        const mirrorRight = wiringMode === "mirrored";
                         renumberColsByPosition(leftHalves, false);
                         const rightCols = renumberColsByPosition(rightHalves, mirrorRight);
+                        rightColCount = rightCols;
                         rightHalves.forEach(k => {
                             k.matrixRow += perHalfRows;
                             k.matrix = [k.matrixRow, k.matrixCol];
@@ -533,6 +556,13 @@ const UNIT_SIZE = 55; // 1U = 55px
                             isSplit ? perHalfRows : numLogicalRows, numLogicalCols));
                     }
 
+                    // "flipped": right column c (left→right) wires to the pin the left half uses for the
+                    // mirror-image column; spare positions are NO_PIN (QMK needs equal pin counts).
+                    const rightPinsFlipped = (isSplit && wiringMode === "flipped") ? {
+                        rows: activeRows,
+                        cols: [...activeCols.slice(0, rightColCount).reverse(), ...Array(Math.max(0, activeCols.length - rightColCount)).fill("NO_PIN")],
+                    } : null;
+
                     // Build QMK JSON
                     currentJSON = {
                         keyboard_name: "Auto-Routed KLE Board",
@@ -546,6 +576,7 @@ const UNIT_SIZE = 55; // 1U = 55px
                             rows: activeRows,
                             cols: activeCols
                         },
+                        ...(rightPinsFlipped ? { matrix_pins_right: rightPinsFlipped } : {}),
                         layouts: {
                             LAYOUT: {
                                 layout: physicalLayout
@@ -1318,6 +1349,7 @@ const UNIT_SIZE = 55; // 1U = 55px
                 const innerRight = isSplit ? avgX < midX : true;
                 const rowIds = [...new Set(ks.map(k => k.normRow))].sort((a, b) => a - b);
                 const colIds = [...new Set(ks.map(k => k.c))].sort((a, b) => a - b);
+                const sidePins = pinsFor(side, activeRows, activeCols);
                 // Row lanes go beyond the half's inner edge, into its half of the gap to the other half
                 // (split) or past the right end (one controller). If the halves overlap so there's no
                 // gap (angled halves like an Alice), they go beyond the OUTER edge instead.
@@ -1349,7 +1381,7 @@ const UNIT_SIZE = 55; // 1U = 55px
                     const start = { x: bottom.cx, y: bottom.cy + ZONE }, x = freeX(bottom.cx);
                     const path = x === bottom.cx ? [start, { x, y: blockTop }]
                         : [start, { x: bottom.cx, y: start.y + 6 }, { x, y: start.y + 6 }, { x, y: blockTop }];
-                    pins.push({ x, label: activeCols[c] || "?", color: pinColor(activeRows.length + c), kind: "col", idx: c, path });
+                    pins.push({ x, label: sidePins.cols[c] || "?", color: pinColor(activeRows.length + c), kind: "col", idx: c, path });
                 });
                 // Row lanes: bottom row nearest the keys, top row farthest out, so stubs never cross lanes.
                 let cur = edge + dirOut * step / 2;
@@ -1359,7 +1391,7 @@ const UNIT_SIZE = 55; // 1U = 55px
                     const row = ks.filter(k => k.normRow === r);
                     const inner = row.reduce((m, k) => (towardRight ? k.cx > m.cx : k.cx < m.cx) ? k : m);
                     const x = laneOf[r], start = { x: inner.cx, y: inner.cy - ZONE };
-                    pins.push({ x, label: activeRows[r] || "?", color: pinColor(r), kind: "row", idx: r,
+                    pins.push({ x, label: sidePins.rows[r] || "?", color: pinColor(r), kind: "row", idx: r,
                         path: [start, { x, y: start.y }, { x, y: blockTop }] });
                 });
                 const xs = pins.map(p => p.x);
@@ -1395,6 +1427,53 @@ const UNIT_SIZE = 55; // 1U = 55px
                     fill: wireless ? "#89b4fa" : "#f9e2af", "data-link-label": "1" }, label);
             }
             return { extentX, extentY };
+        }
+
+        // Split notice: what changes with two controllers. Halves MAY have different key counts
+        // (QMK: Keebio Quefrency 30+37, Sinc 38+44); what must match is the matrix — both
+        // controllers use the same row/column pin list, so the smaller half leaves pins unused.
+        // Warns when the halves overlap, i.e. the layout wasn't drawn as two separate halves.
+        function renderSplitNotice(layout, activeRows, activeCols, matrixRowsCount) {
+            const box = document.getElementById('splitNotice');
+            if (!box) return;
+            const isSplit = !!(currentJSON && currentJSON.split && (currentJSON.split.enabled ?? true));
+            const keys = layout.filter(k => k.matrix);
+            if (!isSplit || !keys.length || !matrixRowsCount) { box.style.display = 'none'; box.innerHTML = ''; return; }
+            const half = side => keys.filter(k => (k.matrix[0] >= matrixRowsCount ? 1 : 0) === side);
+            const L = half(0), R = half(1);
+            const stats = ks => ({
+                n: ks.length,
+                rows: new Set(ks.map(k => k.matrix[0] % matrixRowsCount)).size,
+                cols: new Set(ks.map(k => k.matrix[1])),
+            });
+            const sl = stats(L), sr = stats(R);
+            const unusedPins = (st, side) => pinsFor(side, activeRows, activeCols).cols.filter((p, c) => !st.cols.has(c) && p !== "NO_PIN");
+            const lines = [];
+            lines.push(`✂️ <b>Split keyboard, two controllers.</b> Left half <b>${sl.n} keys</b> (${sl.rows} rows × ${sl.cols.size} columns), right half <b>${sr.n} keys</b> (${sr.rows} × ${sr.cols.size}).`);
+            if (sl.n !== sr.n) {
+                lines.push(`Most splits are symmetric (Lily58, Corne, Sofle, Kyria: same keys on both halves), but uneven halves also work: QMK splits such as Keebio Quefrency (30 + 37 keys) and Sinc (38 + 44) do this. What must match is the matrix: both controllers use the same ${activeRows.length} row pins and ${activeCols.length} column pins.`);
+            } else {
+                lines.push(`Both controllers use the same ${activeRows.length} row pins and ${activeCols.length} column pins.`);
+            }
+            for (const [name, st, side] of [["left", sl, 0], ["right", sr, 1]]) {
+                const unused = unusedPins(st, side);
+                if (unused.length) lines.push(`On the <b>${name}</b> controller, column pin${unused.length > 1 ? 's' : ''} <b>${unused.join(', ')}</b> ${unused.length > 1 ? 'have' : 'has'} no keys on that half: leave ${unused.length > 1 ? 'them' : 'it'} unconnected there.`);
+            }
+            // Do the halves overlap? Compare the left half's right edge with the right half's left edge.
+            const xr = k => (k.x || 0) + (k.w || 1), xl = k => (k.x || 0);
+            const leftEdge = Math.max(...L.map(xr)), rightEdge = Math.min(...R.map(xl));
+            if (L.length && R.length && rightEdge - leftEdge < 0.25) {
+                const gap = rightEdge - leftEdge;
+                const how = gap < 0 ? `<b>The halves overlap</b> by ${(-gap).toFixed(2)}u` : `<b>The halves are only ${gap.toFixed(2)}u apart</b>`;
+                lines.push(`⚠️ ${how} (left half reaches x≈${leftEdge.toFixed(2)}u, right half starts at x≈${rightEdge.toFixed(2)}u): this layout wasn't drawn as two separate halves, so the split line is a guess. Check that every key landed on the half you'll actually build; if not, split it in the layout editor first.`);
+                box.setAttribute('data-overlap', '1');
+            } else {
+                box.setAttribute('data-overlap', '');
+            }
+            const rp = rightHalfPins();
+            if (rp && rp.cols) lines.push(`The right controller has its <b>own column order</b> (QMK <code>split.matrix_pins.right</code>): ${rp.cols.join(', ')}. The firmware export writes it for you.`);
+            box.innerHTML = lines.join('<br>');
+            box.style.display = 'block';
         }
 
         // One line under the board dropdown: one controller, or two and how they're linked.
@@ -1467,6 +1546,8 @@ const UNIT_SIZE = 55; // 1U = 55px
                 let isLikelySplit = currentJSON.split || kbName.includes("lily") || kbName.includes("split");
                 matrixRowsCount = isLikelySplit ? (Math.floor((max_r + 1) / 2) || 5) : (max_r + 1);
             }
+
+            renderSplitNotice(layout, activeRows, activeCols, matrixRowsCount);
 
             // Matrix and Hardware Validation
             const validation = validateMatrixIntegrity(layout, selectedProfile, activeRows, activeCols);
@@ -1546,8 +1627,9 @@ const UNIT_SIZE = 55; // 1U = 55px
                     const side = r >= matrixRowsCount ? 1 : 0;
                     const normalizedRow = r >= matrixRowsCount ? r - matrixRowsCount : r;
 
-                    rowPin = activeRows[normalizedRow] || "N/A (Pin Limit Exceeded)";
-                    colPin = activeCols[c] || "N/A (Pin Limit Exceeded)";
+                    const sidePins = pinsFor(side, activeRows, activeCols);
+                    rowPin = sidePins.rows[normalizedRow] || "N/A (Pin Limit Exceeded)";
+                    colPin = sidePins.cols[c] || "N/A (Pin Limit Exceeded)";
 
                     const cx = (draw_x * UNIT_SIZE) + (w * UNIT_SIZE / 2);
                     const cy = (y * UNIT_SIZE) + (h * UNIT_SIZE / 2);
@@ -1736,6 +1818,9 @@ const UNIT_SIZE = 55; // 1U = 55px
                     return;
                 }
                 const linkPin = currentJSON.split_link && currentJSON.split_link.pin;
+                // Splits declare each side's pins explicitly, even when both use the same list.
+                const ownRightPins = isSplit ? rightHalfPins() : null;
+                const rightPins = isSplit ? (ownRightPins || { rows: activeRows, cols: activeCols }) : null;
 
                 // Logical matrix size. Split: QMK scans left rows then right rows, so
                 // MATRIX_ROWS = 2 x row pins per half (matrix_pins.rows lists one half).
@@ -1786,9 +1871,14 @@ const UNIT_SIZE = 55; // 1U = 55px
                 // Keyboard-level config.h
                 const splitLine = isSplit && linkPin ? [
                     ``,
-                    `// Split keyboard: the halves talk half-duplex serial over the TRRS cable on ${linkPin}`,
-                    `// (set as split.serial in info.json). Wire tip/ring/sleeve the same on both halves.`,
+                    `// Split keyboard: two controllers, one firmware (flash the same file to both halves).`,
+                    `// Link: half-duplex serial over the TRRS cable on ${linkPin} of each half (split.serial in`,
+                    `// info.json). Wire tip/ring/sleeve the same on both halves; never hot-plug the cable.`,
                     `#define SPLIT_USB_DETECT`,
+                    `// Handedness: the half with USB plugged in is the left (master) half.`,
+                    `// To plug USB into either half, use EE_HANDS instead and flash each half once with`,
+                    `// :uf2-split-left / :uf2-split-right (RP2040) or :dfu-split-left/right / :avrdude-split-left/right.`,
+                    `#define MASTER_LEFT`,
                 ].join('\n') : isSplit ? [
                     ``,
                     `// Split keyboard — REQUIRED: configure your serial/TRRS communication pin`,
@@ -1809,6 +1899,13 @@ const UNIT_SIZE = 55; // 1U = 55px
                     `#define MATRIX_COLS ${numCols}`,
                     `#define MATRIX_ROW_PINS { ${activeRows.join(', ')} }`,
                     `#define MATRIX_COL_PINS { ${activeCols.join(', ')} }`,
+                    ...(rightPins ? [
+                        ownRightPins
+                            ? `// Right half: its own pin order (mirror-image wiring; same count, NO_PIN = unused)`
+                            : `// Right half: same pins as the left half`,
+                        `#define MATRIX_ROW_PINS_RIGHT { ${(rightPins.rows || activeRows).join(', ')} }`,
+                        `#define MATRIX_COL_PINS_RIGHT { ${(rightPins.cols || activeCols).join(', ')} }`,
+                    ] : []),
                     `#define DIODE_DIRECTION ${diodeDirection}${splitLine}`,
                 ].join('\n');
 
@@ -1827,6 +1924,7 @@ const UNIT_SIZE = 55; // 1U = 55px
                     ``,
                     `MCU = ${mcuInfo.mcu}`,
                     `BOOTLOADER = ${mcuInfo.boot}`,
+                    ...(isSplit ? [``, `# Split keyboard: declared in info.json (split.enabled, split.transport,`, `# split.serial, split.matrix_pins.right) — nothing else needed here.`] : []),
                 ].join('\n');
 
                 // keymaps/vial/rules.mk
@@ -1859,9 +1957,14 @@ const UNIT_SIZE = 55; // 1U = 55px
                     processor: mcuInfo.mcu,
                     bootloader: mcuInfo.boot,
                     diode_direction: diodeDirection,
-                    ...(isSplit ? { split: linkPin
-                        ? { enabled: true, serial: { driver: mcuInfo.mcu === 'RP2040' ? 'vendor' : 'bitbang', pin: linkPin } }
-                        : { enabled: true } } : {}),
+                    ...(isSplit ? { split: {
+                        enabled: true,
+                        transport: { protocol: 'serial' }, // TRRS/TRS cable between the halves
+                        ...(linkPin ? { serial: { driver: mcuInfo.mcu === 'RP2040' ? 'vendor' : 'bitbang', pin: linkPin } } : {}),
+                        // QMK writes NO_PIN as null in JSON
+                        ...(rightPins ? { matrix_pins: { right: { rows: rightPins.rows.map(p => p === 'NO_PIN' ? null : p),
+                                                                  cols: rightPins.cols.map(p => p === 'NO_PIN' ? null : p) } } } : {}),
+                    } } : {}),
                     matrix_pins: { rows: activeRows, cols: activeCols },
                     layouts: {
                         [layoutName]: {

@@ -35,12 +35,55 @@ describe("right half column numbering", () => {
         assert.ok(outerFirst(keys, "left"));
         assert.ok(!outerFirst(keys, "right"), "right col 0 at its inner (left) edge");
     });
-    test("same pin list on both controllers (QMK MATRIX_ROW_PINS / MATRIX_COL_PINS)", async () => {
-        const ctx = setup();
+    test("mirrored / same direction: the right controller declares the same pin list, explicitly", async () => {
+        for (const wiring of ["mirrored", "same"]) {
+            const ctx = setup({ wiring });
+            const info = JSON.parse((await h.exportZip(ctx))["info.json"]);
+            assert.deepEqual(info.split.matrix_pins.right, info.matrix_pins, `${wiring}: right pins = left pins`);
+        }
+    });
+
+    // Which pin does the PHYSICAL outer column of each half get?
+    const outerPins = ctx => {
+        const keys = h.readKeys(ctx), R = ctx.app.currentJSON.matrix_pins.rows.length;
+        const outer = (side, pick) => keys.filter(k => (k.matrix[0] >= R ? 1 : 0) === side).reduce((m, k) => pick(k.cx, m.cx) ? k : m);
+        return { left: outer(0, (a, b) => a < b).colPin, right: outer(1, (a, b) => a > b).colPin };
+    };
+    test("mirrored and flipped-in-firmware wire the same pin to both outer columns; same direction doesn't", () => {
+        const m = outerPins(setup({ wiring: "mirrored" })), f = outerPins(setup({ wiring: "flipped" })), s = outerPins(setup({ wiring: "same" }));
+        assert.equal(m.left, m.right, "mirrored");
+        assert.equal(f.left, f.right, "flipped in firmware");
+        assert.notEqual(s.left, s.right, "same direction");
+    });
+    test("flipped in firmware: matrix numbered left→right, right controller gets a reversed column list", async () => {
+        const ctx = setup({ wiring: "flipped" });
+        const keys = h.readKeys(ctx);
+        assert.ok(!outerFirst(keys, "right"), "numbering stays left→right on the right half");
+        const { cols } = ctx.app.currentJSON.matrix_pins;
+        const right = ctx.app.currentJSON.matrix_pins_right.cols;
+        assert.equal(right.length, cols.length, "QMK needs the same pin count on both halves");
+        const used = right.filter(p => p !== "NO_PIN");
+        assert.deepEqual(used, cols.slice(0, used.length).reverse());
         const files = await h.exportZip(ctx);
         const info = JSON.parse(files["info.json"]);
-        assert.equal(info.split.matrix_pins, undefined, "no separate right-hand pins needed");
-        assert.equal(info.split.enabled, true);
+        assert.deepEqual(info.split.matrix_pins.right.cols, right.map(p => p === "NO_PIN" ? null : p), "NO_PIN is null in JSON");
+        assert.match(files["config.h"], new RegExp(`#define MATRIX_COL_PINS_RIGHT \\{ ${right.join(", ")} \\}`));
+        assert.match(h.readKeys(ctx).length ? ctx.byId("splitNotice").innerHTML : "", /own column order/);
+    });
+    test("a QMK file's own right-hand pins (split.matrix_pins.right, like keebio/iris rev8) are used for the right half", () => {
+        const f = fx.qmkSplitUpload();
+        f.split.matrix_pins = { right: { rows: ["GP22", "GP19", "GP18", "GP17"], cols: ["GP27", "GP28", "GP3", "GP6", "GP29", "GP16"] } };
+        const ctx = h.uploadJSON(f);
+        h.setView(ctx, { wiring: true });
+        for (const k of h.readKeys(ctx)) {
+            const right = k.matrix[0] >= 4;
+            const pins = right ? f.split.matrix_pins.right : f.matrix_pins;
+            assert.equal(k.rowPin, pins.rows[k.matrix[0] % 4], `${right ? "right" : "left"} key row pin`);
+            assert.equal(k.colPin, pins.cols[k.matrix[1]], `${right ? "right" : "left"} key col pin`);
+        }
+        const c = h.readControllers(ctx);
+        assert.ok(c.homeruns.filter(r => r.side === 1).every(r => f.split.matrix_pins.right[r.kind === "row" ? "rows" : "cols"].includes(r.pin)),
+            "right controller block is labelled with the right-hand pins");
     });
 });
 
@@ -111,5 +154,52 @@ describe("a controller per half", () => {
         assert.match(c.titles[0].text, /^Controller · Waveshare RP2040-Plus/);
         assert.equal(c.homeruns.length, rows.length + cols.length);
         assert.equal(c.link, null);
+    });
+});
+
+describe("split notice (shown when switching to a split)", () => {
+    const notice = ctx => ctx.byId("splitNotice");
+    const text = ctx => notice(ctx).innerHTML.replace(/<[^>]+>/g, "");
+
+    test("monolithic: no split notice", () => {
+        const ctx = setup({ split: false, board: "waveshare_2040_plus", layout: fx.alice() });
+        assert.equal(notice(ctx).style.display, "none");
+    });
+
+    test("switching monolithic → split from the dropdown shows the notice", () => {
+        const ctx = setup({ split: false, board: "rp2040_zero", layout: fx.ortho(4, 6, { gap: 3 }) });
+        assert.equal(notice(ctx).style.display, "none");
+        const sel = ctx.byId("boardSelect");
+        sel.value = "split:rp2040_zero"; sel.dispatch("change");
+        assert.equal(notice(ctx).style.display, "block");
+        assert.match(text(ctx), /Split keyboard, two controllers\. Left half 24 keys \(4 rows × 6 columns\), right half 24 keys \(4 × 6\)/);
+        assert.equal(notice(ctx).attrs["data-overlap"], "", "clean gap: no overlap warning");
+        assert.ok(!/unconnected/.test(text(ctx)), "equal halves: no unused pins");
+    });
+
+    test("uneven halves are allowed: explains why, names the unused pins", () => {
+        // 4×5 on the left, 4×7 on the right
+        const kle = [];
+        for (let r = 0; r < 4; r++) {
+            const row = [];
+            for (let c = 0; c < 5; c++) row.push(`L${r}${c}`);
+            row.push({ x: 3 });
+            for (let c = 0; c < 7; c++) row.push(`R${r}${c}`);
+            kle.push(row);
+        }
+        const ctx = setup({ layout: kle });
+        const t = text(ctx);
+        assert.match(t, /Left half 20 keys .* right half 28 keys/);
+        assert.match(t, /Most splits are symmetric .* but uneven halves also work: QMK splits such as Keebio Quefrency \(30 \+ 37 keys\) and Sinc \(38 \+ 44\)/);
+        const { cols } = ctx.app.currentJSON.matrix_pins;
+        assert.equal(cols.length, 7, "one column pin list sized for the bigger half");
+        assert.match(t, new RegExp(`On the left controller, column pins ${cols.slice(5).join(", ")} have no keys on that half`));
+        assert.ok(!/On the right controller/.test(t));
+    });
+
+    test("halves that touch or overlap (a layout not drawn as a split, e.g. AliceZero) get a warning", () => {
+        const ctx = setup({ layout: fx.alice(), board: "waveshare_2040_plus" });
+        assert.equal(notice(ctx).attrs["data-overlap"], "1");
+        assert.match(text(ctx), /⚠️ The halves are only 0\.\d+u apart .* the split line is a guess/);
     });
 });
