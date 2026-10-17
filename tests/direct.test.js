@@ -159,9 +159,51 @@ describe("direct wiring: export", () => {
         assert.ok(![...left.flat(), ...right.flat()].includes("GP29"));
         assert.equal(h.parseConfigH(files["config.h"]).rows, 4);
         assert.match(files["config.h"], /DIRECT_PINS_RIGHT/);
+        // the rest of the explicit split config still applies; no matrix pin lists for either side
+        assert.deepEqual(info.split.transport, { protocol: "serial" });
+        assert.match(files["config.h"], /#define MASTER_LEFT/);
+        assert.doesNotMatch(files["config.h"], /MATRIX_(ROW|COL)_PINS/);
+        assert.ok(!("rows" in info.split.matrix_pins.right) && !("cols" in info.split.matrix_pins.right));
         // right-half keys show their pins too
         const keys = h.readKeys(ctx);
         keys.filter(k => k.matrix[0] >= 2).forEach(k => assert.equal(k.rowPin, right[k.matrix[0] - 2][k.matrix[1]]));
+    });
+});
+
+describe("direct wiring: split halves", () => {
+    test("the right controller's grid comes from pinsFor(right): its own grid, shown on its keys", () => {
+        const ctx = direct(fx.ortho(2, 3, { gap: 3 }), { split: true });
+        const j = ctx.app.currentJSON;
+        assert.deepEqual(j.matrix_pins_right, { direct: [["GP0", "GP1", "GP2"], ["GP3", "GP4", "GP5"]] });
+        const notice = ctx.byId("splitNotice");
+        assert.equal(notice.style.display, "block");
+        assert.match(notice.innerHTML, /direct-wired.*6 pins on the left, 6 on the right/);
+        assert.doesNotMatch(notice.innerHTML, /same 0 row pins/);
+    });
+
+    test("'flipped' right half: numbered left→right, but mirror twins still share a pin", () => {
+        const ctx = h.load({ split: true, board: "rp2040_zero", wiring: "direct" });
+        ctx.byId("rightHalfWiring").value = "flipped";
+        ctx.byId("kleInput").value = JSON.stringify(fx.ortho(2, 3, { gap: 3 }));
+        ctx.byId("processKleBtn").click();
+        const right = ctx.app.currentJSON.matrix_pins_right.direct;
+        assert.deepEqual(right, [["GP2", "GP1", "GP0"], ["GP5", "GP4", "GP3"]]);
+        h.setView(ctx, { wiring: true });
+        const keys = h.readKeys(ctx), left = keys.filter(k => k.matrix[0] < 2), rightKeys = keys.filter(k => k.matrix[0] >= 2);
+        // outermost keys (leftmost of the left half, rightmost of the right half) get the same pin
+        const outer = (ks, pick) => ks.filter(k => k.matrix[0] % 2 === 0).reduce((m, k) => (pick(k.cx, m.cx) ? k : m));
+        assert.equal(outer(left, (a, b) => a < b).rowPin, "GP0");
+        assert.equal(outer(rightKeys, (a, b) => a > b).rowPin, "GP0");
+    });
+
+    test("an uploaded split keyboard.json with split.matrix_pins.right.direct uses it for the right half", () => {
+        const layout = [{ matrix: [0, 0], x: 0, y: 0 }, { matrix: [0, 1], x: 1, y: 0 },
+            { matrix: [1, 0], x: 4, y: 0 }, { matrix: [1, 1], x: 5, y: 0 }];
+        const ctx = h.uploadJSON({ keyboard_name: "split_pad", processor: "RP2040", bootloader: "rp2040",
+            split: { enabled: true, matrix_pins: { right: { direct: [["GP7", "GP6"]] } } },
+            matrix_pins: { direct: [["GP6", "GP7"]] }, layouts: { LAYOUT: { layout } } });
+        h.setView(ctx, { wiring: true });
+        assert.deepEqual(h.readKeys(ctx).map(k => k.rowPin), ["GP6", "GP7", "GP7", "GP6"]);
     });
 });
 

@@ -194,6 +194,7 @@
             <select id="rightHalfWiring" title="How the right half's columns are wired to the same pin list as the left half" style="display:none; font-size: 12px;">
                 <option value="mirrored" selected>Right half mirrored (outer column = col 0)</option>
                 <option value="same">Right half same direction (left column = col 0)</option>
+                <option value="flipped">Right half mirrored, flipped in firmware (MATRIX_COL_PINS_RIGHT)</option>
             </select>
             <select id="wiringSelect" title="Diode matrix, or direct wiring for small boards: every switch on its own pin, the other leg on a shared GND, no diodes" style="display:none; font-size: 12px;"><!-- filled by cubify.js --></select>
 
@@ -212,6 +213,7 @@
         </div>
     </div>
 
+    <div id="splitNotice" style="display:none; margin-top: 12px; padding: 12px 15px; border-radius: 8px; background: rgba(249, 226, 175, 0.08); border: 1px solid var(--yellow, #f9e2af); color: var(--text-main); font-size: 13px; line-height: 1.6;"></div>
     <div id="warningBanner" style="display:none; background: rgba(243, 139, 168, 0.2); border: 2px solid var(--accent); color: var(--accent); padding: 15px; border-radius: 8px; margin-top: 15px; font-weight: bold; text-align: center;"></div>
 
     <div id="amoebaLayerBar" style="display:none; margin-top: 12px; gap: 16px; align-items: center; flex-wrap: wrap; color: var(--text-sub); font-size: 13px; font-weight: bold;">
@@ -303,6 +305,6 @@
         </div>
     </div>
 
-    <script src="cubify.js?v=18"></script>
+    <script src="cubify.js?v=20"></script>
 </body>
 </html>
