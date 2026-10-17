@@ -265,7 +265,8 @@ describe("Amoeba readability", () => {
         for (const p of am.pads) {
             const wired = am.wires.some(w => (w.from === p.key && near(w.a, [p.x, p.y])) || (w.to === p.key && near(w.b, [p.x, p.y])));
             const feed = am.powerIn.some(f => f.key === p.key && f.net === p.net && near([f.x, f.y], [p.x, p.y]));
-            assert.ok(wired || feed, `pad ${p.net} on key ${p.key} is shown but carries no wire`);
+            const homerun = h.readControllers(ctx).homeruns.some(r => near(r.path[0], [p.x, p.y]));
+            assert.ok(wired || feed || homerun, `pad ${p.net} on key ${p.key} is shown but carries no wire`);
         }
         h.setView(ctx, { bottom: true, amoeba: true, layers: { rows: false, cols: false, led: false, power: true, pads: true } });
         const am2 = h.readAmoeba(ctx);
@@ -366,6 +367,83 @@ describe("Amoeba LED power feed", () => {
                         const onWire = am.wires.some(w => /^(vdd|vss):/.test(w.wire) && (near(w.a, [f.x, f.y]) || near(w.b, [f.x, f.y])));
                         assert.ok(!onWire, "the feed pad is the board's free one, not the one the chain leaves from");
                     }
+                }
+            }
+        });
+    }
+});
+
+describe("Amoeba view: controller per half, wired from the pads", () => {
+    const NET = { row: "SR", col: "SC", led: "DIN", vdd: "VDD", vss: "VSS" };
+    for (const [label, make, sides, supply] of [
+        ["AliceZero on RP2040-Plus (one controller)", () => h.importKLE(fx.alice(), { board: "waveshare_2040_plus" }), 1, ["VBUS p40", "GND p38"]],
+        ["Lily58-style split on 2× RP2040-Zero", () => h.importKLE(fx.lilyLike(), { split: true, board: "rp2040_zero" }), 2, ["5V", "GND"]],
+    ]) {
+        test(`every row, column, LED data and power wire runs from the right pad to its own controller: ${label}`, () => {
+            const ctx = make();
+            h.setView(ctx, { bottom: true, amoeba: true, layers: { rows: true, cols: true, led: true, pads: true } });
+            const keys = h.readKeys(ctx), am = h.readAmoeba(ctx), c = h.readControllers(ctx);
+            const { rows, cols } = ctx.app.currentJSON.matrix_pins;
+            const R = rows.length, split = sides === 2;
+            const sideOf = k => (split && k.matrix[0] >= R ? 1 : 0);
+            assert.equal(c.blocks.length, sides);
+            for (let side = 0; side < sides; side++) {
+                const ks = keys.filter(k => sideOf(k) === side);
+                const mine = c.homeruns.filter(r => r.side === side);
+                const want = new Set([...ks.map(k => "row" + (k.matrix[0] % (split ? R : Infinity))), ...ks.map(k => "col" + k.matrix[1])]);
+                const got = new Set(mine.filter(r => r.kind === "row" || r.kind === "col").map(r => r.kind + r.idx));
+                assert.deepEqual(got, want, `side ${side}: one home-run per row and column`);
+                for (const r of mine) {
+                    const pad = am.pads.find(p => near([p.x, p.y], r.path[0]));
+                    assert.ok(pad, `${r.kind} ${r.idx} doesn't start on a pad`);
+                    assert.equal(pad.net, NET[r.kind], `${r.kind} ${r.idx} starts on a ${pad.net} pad`);
+                    const k = keys[pad.key];
+                    assert.equal(sideOf(k), side, `${r.kind} ${r.idx} starts on the other half`);
+                    if (r.kind === "row") assert.equal(k.matrix[0] % (split ? R : Infinity), r.idx);
+                    if (r.kind === "col") {
+                        assert.equal(k.matrix[1], r.idx);
+                        const lowest = Math.max(...ks.filter(q => q.matrix[1] === r.idx).map(q => q.cy));
+                        assert.ok(Math.abs(k.cy - lowest) < 0.01, "column home-run leaves from the column's lowest board");
+                    }
+                }
+                // LED data + power from the L0 board's feed pads to the controller's pins
+                const l0 = am.leds.find(l => l.n === 0 && l.side === side);
+                const ledPin = l0.text.match(/◀ (\S+)/)[1];
+                for (const [kind, pin] of [["led", ledPin], ["vdd", supply[0]], ["vss", supply[1]]]) {
+                    const r = mine.find(x => x.kind === kind);
+                    assert.ok(r, `side ${side}: no ${kind} home-run`);
+                    assert.equal(r.pin, pin);
+                    const pad = am.pads.find(p => near([p.x, p.y], r.path[0]));
+                    assert.equal(pad.key, l0.key, `${kind} leaves from the first LED board`);
+                }
+                const lanes = mine.map(r => r.path[r.path.length - 1][0]).sort((a, b) => a - b);
+                lanes.slice(1).forEach((x, i) => assert.ok(x - lanes[i] >= 3, `side ${side}: two home-runs share x≈${x.toFixed(0)}`));
+            }
+        });
+    }
+
+    // Pin labels are 8 px text rotated 90° at (x, y): they cover x-8..x horizontally and run
+    // y..y+len downward. 4.5 px per character is a lower bound for that bold font.
+    const span = l => ({ x1: l.x - 8, x2: l.x, y1: l.y, y2: l.y + l.text.length * 4.5 });
+    for (const [label, make] of [
+        ["AliceZero on RP2040-Plus", () => h.importKLE(fx.alice(), { board: "waveshare_2040_plus" })],
+        ["AliceZero as a split on 2× RP2040-Plus (halves touch: lanes go outward)", () => h.importKLE(fx.alice(), { split: true, board: "waveshare_2040_plus" })],
+        ["Lily58-style split on 2× RP2040-Zero", () => h.importKLE(fx.lilyLike(), { split: true, board: "rp2040_zero" })],
+    ]) {
+        test(`pin labels never overlap and stay inside their controller block: ${label}`, () => {
+            const ctx = make();
+            h.setView(ctx, { bottom: true, amoeba: true, layers: { rows: true, cols: true, led: true, pads: true } });
+            const c = h.readControllers(ctx);
+            assert.ok(c.pinLabels.length > 0);
+            const S = c.pinLabels.map(span);
+            for (let i = 0; i < S.length; i++) {
+                const a = S[i];
+                assert.ok(c.blocks.some(b => a.x1 >= b.x1 && a.x2 <= b.x2 && a.y1 >= b.y && a.y2 <= b.y2),
+                    `label ${c.pinLabels[i].text} at x=${a.x2.toFixed(0)} sticks out of its block`);
+                for (let j = i + 1; j < S.length; j++) {
+                    const b = S[j];
+                    const hit = a.x1 < b.x2 && b.x1 < a.x2 && a.y1 < b.y2 && b.y1 < a.y2;
+                    assert.ok(!hit, `labels ${c.pinLabels[i].text} and ${c.pinLabels[j].text} overlap`);
                 }
             }
         });

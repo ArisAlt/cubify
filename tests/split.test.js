@@ -203,3 +203,12 @@ describe("split notice (shown when switching to a split)", () => {
         assert.match(text(ctx), /⚠️ The halves are only 0\.\d+u apart .* the split line is a guess/);
     });
 });
+
+test("a QMK file's halves come from its matrix: no 'split line is a guess' warning even if they touch", () => {
+    const f = fx.qmkSplitUpload();
+    // move the right half right up against the left half
+    Object.values(f.layouts)[0].layout.forEach(e => { if (e.matrix[0] >= 4) e.x -= 3; });
+    const ctx = h.uploadJSON(f);
+    assert.equal(ctx.byId("splitNotice").style.display, "block");
+    assert.equal(ctx.byId("splitNotice").attrs["data-overlap"], "");
+});
