@@ -27,7 +27,7 @@ class El {
     setAttribute(k, v) { this.attrs[k] = String(v); }
 }
 
-function load({ split = false, board = "auto" } = {}) {
+function load({ split = false, board = "auto", wiring = null } = {}) {
     const els = {};
     const byId = id => (els[id] = els[id] || new El("div", id));
     const document = {
@@ -57,6 +57,7 @@ function load({ split = false, board = "auto" } = {}) {
     const app = factory(document, {}, m => alerts.push(String(m)), JSZip, URL, FileReader);
     // cubify.js builds both board dropdowns at load; pick like a user would.
     byId("kleBoardSelect").value = (split ? "split:" : "") + board;
+    if (wiring) byId("kleWiringSelect").value = wiring; // "matrix" | "direct"
     return { app, els, byId, alerts, zipFiles };
 }
 

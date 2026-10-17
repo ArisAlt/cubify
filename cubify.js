@@ -126,6 +126,55 @@ const UNIT_SIZE = 55; // 1U = 55px
             return { rows: pool.slice(0, rowsNeeded), cols: pool.slice(rowsNeeded, rowsNeeded + colsNeeded) };
         }
 
+        // Free GPIOs for the matrix (or direct pins): the board's pool minus the TRRS link pin
+        // that a wired split reserves on each half.
+        function freePinsOf(id, isSplit) {
+            const pr = boardProfiles[id];
+            if (!pr) return [];
+            const meta = BOARD_META[id] || {};
+            const link = isSplit && meta.link === "trrs" ? meta.splitPin : null;
+            return (pr.pins || [...pr.rows, ...pr.cols]).filter(pin => pin !== link);
+        }
+
+        // Direct wiring: a rows x cols grid per controller with one pin per key, handed out from
+        // `pool` in matrix reading order; null = no key at that [row, col] (QMK's NO_PIN). Both
+        // halves of a split start from the same pool, so mirror-twin keys share a pin.
+        function buildDirectGrids(layout, rows, cols, isSplit, pool) {
+            const sides = isSplit ? [0, 1] : [0];
+            return sides.map(side => {
+                const grid = Array.from({ length: rows }, () => Array(cols).fill(null));
+                layout.filter(k => k.matrix && (isSplit && k.matrix[0] >= rows ? 1 : 0) === side)
+                    .sort((a, b) => a.matrix[0] - b.matrix[0] || a.matrix[1] - b.matrix[1])
+                    .forEach((k, i) => {
+                        const r = k.matrix[0] - side * rows, c = k.matrix[1];
+                        if (grid[r] && c < cols) grid[r][c] = pool[i] || null;
+                    });
+                return grid;
+            });
+        }
+
+        // The direct-pin grids of a layout (KLE import or QMK keyboard.json), or null for a matrix.
+        // A split without its own right-hand grid uses the left one (QMK: DIRECT_PINS_RIGHT falls
+        // back to DIRECT_PINS).
+        function directGridsOf(json) {
+            const left = json && json.matrix_pins && json.matrix_pins.direct;
+            if (!Array.isArray(left)) return null;
+            const sp = json.split && json.split.matrix_pins && json.split.matrix_pins.right;
+            return { left, right: (sp && sp.direct) || json.direct_right || left };
+        }
+        const gridDims = grid => ({ rows: grid.length, cols: grid.reduce((n, r) => Math.max(n, r.length), 0) });
+
+        // A QMK file with direct pins: pick the smallest board whose pin pool holds every pin it uses.
+        function detectDirectBoard(json) {
+            const d = directGridsOf(json);
+            if (!d) return;
+            const used = [...d.left.flat(), ...d.right.flat()].filter(Boolean);
+            const pool = b => boardProfiles[b].pins || [];
+            const id = Object.keys(BOARD_META).filter(b => used.every(p => pool(b).includes(p)))
+                .sort((a, b) => pool(a).length - pool(b).length)[0];
+            if (id) boardSelect.value = boardChoiceValue(id, !!(json.split && (json.split.enabled ?? true)));
+        }
+
         // Two keys that exist in the layout for the Vial unlock combo: [0,0]+[0,1] when present,
         // otherwise the first two keys in row/column order.
         function pickUnlockKeys(layout) {
@@ -142,6 +191,118 @@ const UNIT_SIZE = 55; // 1U = 55px
                 return jsonObj.layouts[firstLayoutKey].layout || [];
             }
             return [];
+        }
+
+        // KLE text → flat physical layout (rotations folded into absolute x/y; logical_x/y kept
+        // for row grouping; a "row,col" top-left label becomes a manual matrix override).
+        function parseKle(rawText) {
+            // Try parsing KLE JSON. Some users copy raw strings, so eval is needed if it's not strict JSON
+            // (KLE JSON uses single quotes or unquoted keys sometimes, standard JSON.parse fails)
+            // A safer regex replacement:
+            let jsonText = rawText.replace(/(['"])?([a-z0-9A-Z_]+)(['"])?:/g, '"$2": ').replace(/'/g, '"');
+            let kleData;
+            try {
+                kleData = JSON.parse(jsonText);
+            } catch (e) {
+                // Fallback to Function constructor (safer than eval) if KLE format is loose
+                kleData = (new Function("return " + rawText))();
+            }
+
+            if (!Array.isArray(kleData)) throw new Error("Invalid KLE format. Must be an array of arrays.");
+
+            let physicalLayout = [];
+            let rx = 0, ry = 0, r = 0;
+            let x = 0, y = 0;
+
+            kleData.forEach(row => {
+                if (!Array.isArray(row)) return; // Skip keyboard metadata objects at the top
+                x = rx;
+                let w = 1, h = 1;
+
+                row.forEach(item => {
+                    if (typeof item === 'object') {
+                        if (item.r !== undefined) r = item.r;
+                        if (item.w !== undefined) w = item.w;
+                        if (item.h !== undefined) h = item.h;
+                        if (item.rx !== undefined) {
+                            rx = item.rx;
+                            x = rx;
+                            y = ry;
+                        }
+                        if (item.ry !== undefined) {
+                            ry = item.ry;
+                            y = ry;
+                        }
+                        if (item.x !== undefined) x += item.x;
+                        if (item.y !== undefined) y += item.y;
+                    } else if (typeof item === 'string') {
+                        // Calculate unrotated center
+                        let cx = x + w / 2;
+                        let cy = y + h / 2;
+
+                        // Rotate center around (rx, ry)
+                        let angle = r * Math.PI / 180;
+                        let dx = cx - rx;
+                        let dy = cy - ry;
+                        let rotated_cx = rx + dx * Math.cos(angle) - dy * Math.sin(angle);
+                        let rotated_cy = ry + dx * Math.sin(angle) + dy * Math.cos(angle);
+
+                        // Top-left of the rotated bounding box
+                        let final_x = rotated_cx - w / 2;
+                        let final_y = rotated_cy - h / 2;
+
+                        let rawLabels = item.split('\n');
+                        let primaryLabel = rawLabels[0] ? rawLabels[0].trim() : '';
+
+                        // kle-ng style manual matrix override: check if top-left label is "row,col"
+                        let matrixOverride = null;
+                        let matrixMatch = primaryLabel.match(/^(\d+)\s*,\s*(\d+)$/);
+                        if (matrixMatch) {
+                            matrixOverride = [parseInt(matrixMatch[1], 10), parseInt(matrixMatch[2], 10)];
+                        }
+
+                        physicalLayout.push({ 
+                            x: Math.round(final_x * 1000) / 1000, 
+                            y: Math.round(final_y * 1000) / 1000, 
+                            logical_x: x,
+                            logical_y: y,
+                            w: w,
+                            h: h,
+                            rot: r,
+                            label: primaryLabel,
+                            matrixOverride: matrixOverride
+                        });
+
+                        x += w;
+                        w = 1; h = 1;
+                    }
+                });
+                y += 1;
+            });
+            return physicalLayout;
+        }
+
+        // Split the layout at its physical midpoint: the widest gap between key centres in the
+        // middle 30% of the board.
+        function findHalves(physicalLayout) {
+            // Find physical midpoint (largest horizontal gap in the centre 30% of the board)
+            let max_x = 0;
+            physicalLayout.forEach(k => { if ((k.x||0) + (k.w||1) > max_x) max_x = (k.x||0) + (k.w||1); });
+            const centre30Lo = max_x * 0.35, centre30Hi = max_x * 0.65;
+            let sortedCenters = physicalLayout.map(k => (k.cx || (k.x||0) + (k.w||1)/2)).sort((a,b) => a-b);
+            let midpoint = max_x / 2;
+            let widestGap = 0.5; // must beat ordinary 1u key spacing noise
+            for (let i = 0; i < sortedCenters.length - 1; i++) {
+                let gap = sortedCenters[i+1] - sortedCenters[i];
+                let gapCentre = (sortedCenters[i] + sortedCenters[i+1]) / 2;
+                if (gapCentre > centre30Lo && gapCentre < centre30Hi && gap > widestGap) {
+                    widestGap = gap;
+                    midpoint = gapCentre;
+                }
+            }
+            const leftHalves  = physicalLayout.filter(k => (k.cx || (k.x||0)+(k.w||1)/2) < midpoint);
+            const rightHalves = physicalLayout.filter(k => (k.cx || (k.x||0)+(k.w||1)/2) >= midpoint);
+            return { leftHalves, rightHalves };
         }
 
         const importKleBtn = document.getElementById('importKleBtn');
@@ -175,11 +336,53 @@ const UNIT_SIZE = 55; // 1U = 55px
             select.appendChild(split);
             select.value = withJson ? "json_file" : "auto";
         }
+        // Wiring: a diode matrix (rows x columns) or, for small boards, direct wiring — every
+        // switch on its own GPIO, the other leg on a shared GND, no diodes.
+        const wiringSelect = document.getElementById('wiringSelect');
+        const kleWiringSelect = document.getElementById('kleWiringSelect');
+        const DIRECT_LABEL = "🔌 Direct wiring (no diodes) · one pin per key, shared GND";
+        function fillWiringSelect(select) {
+            if (!select) return;
+            select.innerHTML = "";
+            [["matrix", "🔳 Diode matrix · rows × columns"], ["direct", DIRECT_LABEL]].forEach(([value, text]) => {
+                const o = document.createElement("option");
+                o.value = value; o.textContent = text;
+                select.appendChild(o);
+            });
+            select.value = "matrix";
+        }
+        // Direct wiring is only offered when every key gets a pin of its own.
+        function offerDirect(select, keys, freePins) {
+            const o = select && Array.from(select.children || []).find(c => c.value === "direct");
+            if (!o) return;
+            const fits = keys <= freePins;
+            o.disabled = !fits && select.value !== "direct";
+            o.textContent = DIRECT_LABEL + (!keys ? "" : fits ? ` (${keys} keys, ${freePins} free pins)`
+                : ` — ✗ ${keys} keys, only ${freePins} free pins`);
+        }
+        // KLE modal: count the pasted keys (per half on a split) against the chosen board.
+        function updateKleWiringOffer() {
+            if (!kleWiringSelect) return;
+            let layout;
+            try { layout = parseKle(kleInput.value.trim()); } catch (e) { layout = []; }
+            const choice = parseBoardChoice(kleBoardSelect.value);
+            let keys = layout.length;
+            if (choice.split && keys) { const h = findHalves(layout); keys = Math.max(h.leftHalves.length, h.rightHalves.length); }
+            const free = choice.id === "auto"
+                ? Math.max(0, ...Object.keys(BOARD_META).filter(id => !isZmkOnly(id)).map(id => freePinsOf(id, choice.split).length))
+                : freePinsOf(choice.id, choice.split).length;
+            offerDirect(kleWiringSelect, keys, free);
+        }
+        fillWiringSelect(wiringSelect);
+        fillWiringSelect(kleWiringSelect);
         fillBoardSelect(boardSelect, { withJson: true, withAuto: false });
         fillBoardSelect(kleBoardSelect, { withJson: false, withAuto: true });
+        if (kleInput) kleInput.addEventListener('input', updateKleWiringOffer);
+        if (kleBoardSelect) kleBoardSelect.addEventListener('change', updateKleWiringOffer);
 
         if (importKleBtn) {
             importKleBtn.addEventListener('click', () => {
+                updateKleWiringOffer();
                 kleModal.style.display = 'flex';
             });
         }
@@ -216,6 +419,7 @@ const UNIT_SIZE = 55; // 1U = 55px
                                 }
                             }
                         }
+                        if (boardSelect.value === "json_file") detectDirectBoard(currentJSON);
                         
                         if (fetchKeymapBtn) fetchKeymapBtn.style.display = 'inline-block';
                         
@@ -261,89 +465,7 @@ const UNIT_SIZE = 55; // 1U = 55px
                 if (!rawText) return;
                 
                 try {
-                    // Try parsing KLE JSON. Some users copy raw strings, so eval is needed if it's not strict JSON
-                    // (KLE JSON uses single quotes or unquoted keys sometimes, standard JSON.parse fails)
-                    // A safer regex replacement:
-                    let jsonText = rawText.replace(/(['"])?([a-z0-9A-Z_]+)(['"])?:/g, '"$2": ').replace(/'/g, '"');
-                    let kleData;
-                    try {
-                        kleData = JSON.parse(jsonText);
-                    } catch (e) {
-                        // Fallback to Function constructor (safer than eval) if KLE format is loose
-                        kleData = (new Function("return " + rawText))();
-                    }
-
-                    if (!Array.isArray(kleData)) throw new Error("Invalid KLE format. Must be an array of arrays.");
-
-                    let physicalLayout = [];
-                    let rx = 0, ry = 0, r = 0;
-                    let x = 0, y = 0;
-
-                    kleData.forEach(row => {
-                        if (!Array.isArray(row)) return; // Skip keyboard metadata objects at the top
-                        x = rx;
-                        let w = 1, h = 1;
-
-                        row.forEach(item => {
-                            if (typeof item === 'object') {
-                                if (item.r !== undefined) r = item.r;
-                                if (item.w !== undefined) w = item.w;
-                                if (item.h !== undefined) h = item.h;
-                                if (item.rx !== undefined) {
-                                    rx = item.rx;
-                                    x = rx;
-                                    y = ry;
-                                }
-                                if (item.ry !== undefined) {
-                                    ry = item.ry;
-                                    y = ry;
-                                }
-                                if (item.x !== undefined) x += item.x;
-                                if (item.y !== undefined) y += item.y;
-                            } else if (typeof item === 'string') {
-                                // Calculate unrotated center
-                                let cx = x + w / 2;
-                                let cy = y + h / 2;
-                                
-                                // Rotate center around (rx, ry)
-                                let angle = r * Math.PI / 180;
-                                let dx = cx - rx;
-                                let dy = cy - ry;
-                                let rotated_cx = rx + dx * Math.cos(angle) - dy * Math.sin(angle);
-                                let rotated_cy = ry + dx * Math.sin(angle) + dy * Math.cos(angle);
-                                
-                                // Top-left of the rotated bounding box
-                                let final_x = rotated_cx - w / 2;
-                                let final_y = rotated_cy - h / 2;
-                                
-                                let rawLabels = item.split('\n');
-                                let primaryLabel = rawLabels[0] ? rawLabels[0].trim() : '';
-                                
-                                // kle-ng style manual matrix override: check if top-left label is "row,col"
-                                let matrixOverride = null;
-                                let matrixMatch = primaryLabel.match(/^(\d+)\s*,\s*(\d+)$/);
-                                if (matrixMatch) {
-                                    matrixOverride = [parseInt(matrixMatch[1], 10), parseInt(matrixMatch[2], 10)];
-                                }
-
-                                physicalLayout.push({ 
-                                    x: Math.round(final_x * 1000) / 1000, 
-                                    y: Math.round(final_y * 1000) / 1000, 
-                                    logical_x: x,
-                                    logical_y: y,
-                                    w: w,
-                                    h: h,
-                                    rot: r,
-                                    label: primaryLabel,
-                                    matrixOverride: matrixOverride
-                                });
-                                
-                                x += w;
-                                w = 1; h = 1;
-                            }
-                        });
-                        y += 1;
-                    });
+                    const physicalLayout = parseKle(rawText);
 
                     // ----------------------------------------------------
                     // GRID ROUTER: Assigns matrix coords by physical Y-bands (rows)
@@ -424,23 +546,7 @@ const UNIT_SIZE = 55; // 1U = 55px
                     const isSplit = kleChoice.split;
                     lastKleText = rawText;
 
-                    // Find physical midpoint (largest horizontal gap in the centre 30% of the board)
-                    let max_x = 0;
-                    physicalLayout.forEach(k => { if ((k.x||0) + (k.w||1) > max_x) max_x = (k.x||0) + (k.w||1); });
-                    const centre30Lo = max_x * 0.35, centre30Hi = max_x * 0.65;
-                    let sortedCenters = physicalLayout.map(k => (k.cx || (k.x||0) + (k.w||1)/2)).sort((a,b) => a-b);
-                    let midpoint = max_x / 2;
-                    let widestGap = 0.5; // must beat ordinary 1u key spacing noise
-                    for (let i = 0; i < sortedCenters.length - 1; i++) {
-                        let gap = sortedCenters[i+1] - sortedCenters[i];
-                        let gapCentre = (sortedCenters[i] + sortedCenters[i+1]) / 2;
-                        if (gapCentre > centre30Lo && gapCentre < centre30Hi && gap > widestGap) {
-                            widestGap = gap;
-                            midpoint = gapCentre;
-                        }
-                    }
-                    const leftHalves  = physicalLayout.filter(k => (k.cx || (k.x||0)+(k.w||1)/2) < midpoint);
-                    const rightHalves = physicalLayout.filter(k => (k.cx || (k.x||0)+(k.w||1)/2) >= midpoint);
+                    const { leftHalves, rightHalves } = findHalves(physicalLayout);
 
                     if (isManualRouting) {
                         // User explicitly provided "Row,Col" for every key in the KLE (kle-ng style)
@@ -493,19 +599,20 @@ const UNIT_SIZE = 55; // 1U = 55px
                     // For split keyboards, each MCU only needs perHalfRows + numLogicalCols pins.
                     // For monolithic, each MCU needs numLogicalRows + numLogicalCols pins.
                     const pinsPerMCU = isSplit ? (perHalfRows + numLogicalCols) : (numLogicalRows + numLogicalCols);
+                    // Direct wiring: one pin per key on each controller instead.
+                    const direct = kleWiringSelect && kleWiringSelect.value === 'direct';
+                    const rightKeys = isSplit ? physicalLayout.filter(k => k.matrix[0] >= perHalfRows).length : 0;
+                    const keysPerMCU = Math.max(physicalLayout.length - rightKeys, rightKeys);
 
                     // Target Board Selection
                     let bestBoard = "rp2040_zero"; // Default fallback
-                    let requiredPins = pinsPerMCU;
+                    let requiredPins = direct ? keysPerMCU : pinsPerMCU;
                     let foundFit = false;
                     
                     const explicitBoard = kleChoice.id;
                     // On a wired split, one pin per half carries the TRRS link and can't be in the matrix.
                     const linkPinOf = id => (isSplit && BOARD_META[id] && BOARD_META[id].link === "trrs") ? BOARD_META[id].splitPin : null;
-                    const matrixPool = id => {
-                        const pr = boardProfiles[id], link = linkPinOf(id);
-                        return (pr.pins || [...pr.rows, ...pr.cols]).filter(pin => pin !== link);
-                    };
+                    const matrixPool = id => freePinsOf(id, isSplit);
                     
                     if (explicitBoard !== "auto") {
                         bestBoard = explicitBoard;
@@ -523,10 +630,15 @@ const UNIT_SIZE = 55; // 1U = 55px
                     // Pin Allocation:
                     // Split: allocate perHalfRows row pins + numLogicalCols col pins (per-MCU physical requirement)
                     // Monolithic: allocate numLogicalRows row pins + numLogicalCols col pins
+                    // Direct: one pool pin per key, in matrix reading order (row by row, column by column)
                     let activeRows = [];
                     let activeCols = [];
+                    let directGrids = null;
                     const linkPin = boardProfiles[bestBoard] ? linkPinOf(bestBoard) : null;
-                    if (boardProfiles[bestBoard]) {
+                    if (direct) {
+                        directGrids = buildDirectGrids(physicalLayout, isSplit ? perHalfRows : numLogicalRows,
+                            numLogicalCols, isSplit, boardProfiles[bestBoard] ? matrixPool(bestBoard) : []);
+                    } else if (boardProfiles[bestBoard]) {
                         const pr = boardProfiles[bestBoard], notLink = list => list.filter(pin => pin !== linkPin);
                         ({ rows: activeRows, cols: activeCols } = allocatePins(
                             { rows: notLink(pr.rows), cols: notLink(pr.cols), pins: matrixPool(bestBoard) },
@@ -537,24 +649,31 @@ const UNIT_SIZE = 55; // 1U = 55px
                     currentJSON = {
                         keyboard_name: "Auto-Routed KLE Board",
                         manufacturer: "Custom Handwired",
-                        diode_direction: "COL2ROW",
+                        // direct wiring has no diodes, so no diode_direction
+                        ...(direct ? {} : { diode_direction: "COL2ROW" }),
                         split: isSplit,
                         // how the two halves talk: TRRS serial pin (same on both halves) or wireless
                         ...(isSplit ? { split_link: BOARD_META[bestBoard] && BOARD_META[bestBoard].link === "wireless"
                             ? { type: "wireless" } : { type: "trrs", pin: linkPin } } : {}),
-                        matrix_pins: {
+                        // QMK keyboard.json: matrix_pins.direct = rows of pins (null = no key there);
+                        // the right half's grid is exported as split.matrix_pins.right.direct.
+                        matrix_pins: direct ? { direct: directGrids[0] } : {
                             rows: activeRows,
                             cols: activeCols
                         },
+                        ...(direct && isSplit ? { direct_right: directGrids[1] } : {}),
                         layouts: {
                             LAYOUT: {
                                 layout: physicalLayout
                             }
                         }
                     };
+                    if (wiringSelect) wiringSelect.value = direct ? 'direct' : 'matrix';
 
                     if (!foundFit && !quietReroute) {
-                        alert(`Warning: This layout requires ${perHalfRows} rows and ${numLogicalCols} columns per MCU (${requiredPins} pins). We selected ${bestBoard}, but it does not have enough pins!`);
+                        alert(direct
+                            ? `Warning: direct wiring needs one pin per key: ${keysPerMCU} keys${isSplit ? ' per half' : ''}, but ${bestBoard} has only ${boardProfiles[bestBoard] ? matrixPool(bestBoard).length : 0} free pins. Keys without a pin are marked N/A — use a diode matrix (${pinsPerMCU} pins) instead.`
+                            : `Warning: This layout requires ${perHalfRows} rows and ${numLogicalCols} columns per MCU (${requiredPins} pins). We selected ${bestBoard}, but it does not have enough pins!`);
                     }
 
                     currentJSON._source = 'kle';
@@ -592,6 +711,7 @@ const UNIT_SIZE = 55; // 1U = 55px
                             }
                         }
                     }
+                    if (boardSelect.value === "json_file") detectDirectBoard(currentJSON);
 
                     renderKeyboard();
                 } catch (err) {
@@ -775,6 +895,7 @@ const UNIT_SIZE = 55; // 1U = 55px
         function rerouteForBoard() {
             if (currentJSON && currentJSON._source === 'kle' && lastKleText && boardSelect.value !== 'json_file') {
                 kleBoardSelect.value = boardSelect.value;
+                if (wiringSelect && kleWiringSelect) kleWiringSelect.value = wiringSelect.value;
                 kleInput.value = lastKleText;
                 quietReroute = true;
                 try { processKleBtn.click(); } finally { quietReroute = false; }
@@ -784,6 +905,7 @@ const UNIT_SIZE = 55; // 1U = 55px
         }
         boardSelect.addEventListener('change', rerouteForBoard);
         if (rightHalfWiring) rightHalfWiring.addEventListener('change', rerouteForBoard);
+        if (wiringSelect) wiringSelect.addEventListener('change', rerouteForBoard);
         showWiringCheckbox.addEventListener('change', renderKeyboard);
 
         viewToggle.addEventListener('click', () => {
@@ -1234,7 +1356,7 @@ const UNIT_SIZE = 55; // 1U = 55px
             }
         });
 
-        function validateMatrixIntegrity(layout, selectedProfile, activeRows, activeCols) {
+        function validateMatrixIntegrity(layout, selectedProfile, activeRows, activeCols, directInfo, isSplit) {
             let maxR = 0;
             let maxC = 0;
             let matrixMap = {};
@@ -1260,7 +1382,13 @@ const UNIT_SIZE = 55; // 1U = 55px
             let hardwareError = null;
             // Use total GPIO pool (pins array) for capacity check, not segregated rows/cols lengths.
             // This avoids false errors when dynamic allocation redistributes pins across row/col groups.
-            if (boardProfiles[selectedProfile] && selectedProfile !== "json_file") {
+            if (directInfo && boardProfiles[selectedProfile]) {
+                // Direct wiring: every key needs a free pin of its own on its controller.
+                const free = freePinsOf(selectedProfile, isSplit).length, { keys, matrix } = directInfo;
+                if (keys > free) {
+                    hardwareError = `⚠️ Direct wiring needs one pin per key: ${keys} keys${isSplit ? ' per half' : ''}, but ${boardSelect.options[boardSelect.selectedIndex].text} has only ${free} free GPIO pins (${keys - free} keys left without a pin). Use a diode matrix instead: ${matrix.rows}×${matrix.cols} = ${matrix.pins} pins.`;
+                }
+            } else if (boardProfiles[selectedProfile] && selectedProfile !== "json_file") {
                 const profile = boardProfiles[selectedProfile];
                 // Total usable pins = the flat `pins` pool, or rows+cols if no pool defined
                 const totalAvailable = (profile.pins || [...profile.rows, ...profile.cols]).length;
@@ -1293,7 +1421,12 @@ const UNIT_SIZE = 55; // 1U = 55px
         // ("home-run" wires), plus the TRRS / wireless link between the two controllers.
         // Columns drop straight down from their lowest key; rows leave at the half's inner edge,
         // each in its own lane, so home-runs never run on top of each other.
-        function drawControllers(svg, keyGeo, activeRows, activeCols, pinColor, ZONE) {
+        // Direct wiring (`direct` set): one home-run per key instead, in lanes along the right edge
+        // of its column (top key outermost, so lanes never cross), plus a GND bus: a stub from each
+        // key to its column's GND line (left edge), the column lines tied together above the top
+        // keys and run down the half's outer edge to the controller's GND pin. Below the keys the
+        // wires fan out to pins 10 px apart so the pin labels stay readable.
+        function drawControllers(svg, keyGeo, activeRows, activeCols, pinColor, ZONE, direct) {
             const NS = "http://www.w3.org/2000/svg";
             const U = UNIT_SIZE, LANE = 7, PIN_R = 3;
             const isSplit = !!(currentJSON.split && (currentJSON.split.enabled ?? true));
@@ -1308,10 +1441,68 @@ const UNIT_SIZE = 55; // 1U = 55px
                 svg.appendChild(e);
                 return e;
             };
+            const GND_COLOR = "#9399b2";
+            const directHomeRuns = (ks, side, outerLeft) => {
+                const wires = [], taken = [];
+                const freeX = x => { while (taken.some(t => Math.abs(t - x) < 2)) x -= 2; taken.push(x); return x; };
+                const order = [...ks].sort((a, b) => a.normRow - b.normRow || a.c - b.c); // = pin order
+                const cols = {};
+                ks.forEach(k => (cols[k.c] = cols[k.c] || []).push(k));
+                const left = k => k.cx - k.w / 2, right = k => k.cx + k.w / 2;
+                const minEdge = Math.min(...ks.map(left)), maxEdge = Math.max(...ks.map(right));
+                const tieY = Math.min(...ks.map(k => k.cy)) - ZONE - 8;
+                const spineX = outerLeft ? Math.max(3, minEdge - 6) : maxEdge + 6;
+                taken.push(spineX);
+                const gnd = (pts, attrs) => el("polyline", { points: pts.map(q => `${q.x},${q.y}`).join(" "), fill: "none",
+                    stroke: GND_COLOR, "stroke-width": 3, "stroke-linejoin": "round", "stroke-linecap": "round", "data-gnd": side, ...attrs });
+                const gxs = [];
+                Object.values(cols).forEach(col => {
+                    col.sort((a, b) => a.cy - b.cy);
+                    // lanes stay right of the key centres: GND stubs run left from the centre
+                    const edge = Math.min(...col.map(right)), cxMax = Math.max(...col.map(k => k.cx));
+                    const step = Math.min(5, Math.max(2, (edge - 6 - (cxMax + 3)) / Math.max(col.length - 1, 1)));
+                    const gx = Math.max(...col.map(left)) + 8;
+                    gxs.push(gx);
+                    gnd([{ x: gx, y: tieY }, { x: gx, y: Math.max(...col.map(k => k.cy)) + ZONE }]);
+                    col.forEach((k, i) => {
+                        const y = k.cy - ZONE, x = freeX(edge - 6 - i * step);
+                        gnd([{ x: k.cx, y: k.cy + ZONE }, { x: gx, y: k.cy + ZONE }], { "data-gnd-key": k.index });
+                        el("circle", { cx: k.cx, cy: k.cy + ZONE, r: 3, fill: GND_COLOR });
+                        el("circle", { cx: k.cx, cy: y, r: 3, fill: k.pin ? pinColor(order.indexOf(k)) : "#fab387" });
+                        wires.push({ x, label: k.pin || "N/A", color: k.pin ? pinColor(order.indexOf(k)) : "#fab387", kind: "key", idx: k.index,
+                            path: [{ x: k.cx, y }, { x, y }] });
+                    });
+                });
+                gnd([{ x: Math.min(...gxs, spineX), y: tieY }, { x: Math.max(...gxs, spineX), y: tieY }]);
+                wires.push({ x: spineX, label: "GND", color: GND_COLOR, kind: "gnd", idx: 0, path: [{ x: spineX, y: tieY }] });
+                // Fan-out: slots in lane order, centred under the lanes. Wires moving left jog in
+                // left-to-right order (and right-movers right-to-left), each a level lower, so no
+                // jog crosses another wire.
+                const SLOT = 10;
+                wires.sort((a, b) => a.x - b.x);
+                const mean = wires.reduce((n, w) => n + w.x, 0) / wires.length;
+                const start = Math.max(4, mean - (wires.length - 1) * SLOT / 2);
+                wires.forEach((w, i) => { w.slot = start + i * SLOT; });
+                const yBase = Math.max(...ks.map(k => k.cy)) + U * 0.5 + 6;
+                const lefts = wires.filter(w => w.slot < w.x - 0.5), rights = wires.filter(w => w.slot > w.x + 0.5).reverse();
+                const levels = Math.max(lefts.length, rights.length);
+                const blockTop = yBase + levels * 4 + 10;
+                [lefts, rights].forEach(list => list.forEach((w, lvl) => {
+                    const y = yBase + lvl * 4;
+                    w.path.push({ x: w.x, y }, { x: w.slot, y });
+                }));
+                const pins = wires.map(w => ({ ...w, x: w.slot, path: [...w.path, { x: w.slot, y: blockTop }] }));
+                return { pins, blockTop };
+            };
             const blocks = [];
             let extentX = 0, extentY = 0;
             sides.forEach(side => {
                 const ks = keyGeo.filter(k => k.side === side);
+                if (direct) {
+                    const avgX = ks.reduce((n, k) => n + k.cx, 0) / ks.length;
+                    const { pins, blockTop } = directHomeRuns(ks, side, !isSplit || avgX < midX);
+                    return drawBlock(side, isSplit ? avgX < midX : true, blockTop, pins);
+                }
                 const minX = Math.min(...ks.map(k => k.cx)), maxX = Math.max(...ks.map(k => k.cx));
                 const avgX = ks.reduce((n, k) => n + k.cx, 0) / ks.length;
                 // inner edge = toward the other half (split) or the right end (one controller)
@@ -1362,16 +1553,22 @@ const UNIT_SIZE = 55; // 1U = 55px
                     pins.push({ x, label: activeRows[r] || "?", color: pinColor(r), kind: "row", idx: r,
                         path: [start, { x, y: start.y }, { x, y: blockTop }] });
                 });
+                drawBlock(side, innerRight, blockTop, pins);
+            });
+            // The controller block, its pins and the home-run wires into it.
+            function drawBlock(side, innerRight, blockTop, pins) {
                 const xs = pins.map(p => p.x);
                 const bx1 = Math.max(2, Math.min(...xs) - 14), bx2 = Math.max(...xs) + 14, bh = U * 0.95;
                 el("rect", { x: bx1, y: blockTop, width: bx2 - bx1, height: bh, rx: 6, fill: "rgba(17,17,27,0.92)",
                     stroke: "#a6adc8", "stroke-width": 1.5, "data-ctrl-block": side });
                 const title = isSplit ? `${side === 0 ? "LEFT" : "RIGHT"} controller · ${boardName}` : `Controller · ${boardName}`;
-                el("text", { x: (bx1 + bx2) / 2, y: blockTop + bh + 13, "text-anchor": "middle", "font-size": 11,
+                const titleW = title.length * 6.2, titleX = Math.max((bx1 + bx2) / 2, 4 + titleW / 2); // keep it on-canvas
+                el("text", { x: titleX, y: blockTop + bh + 13, "text-anchor": "middle", "font-size": 11,
                     "font-weight": "bold", fill: "#cdd6f4", "data-ctrl-title": side }, title);
+                extentX = Math.max(extentX, titleX + titleW / 2 + 10);
                 pins.forEach(p => {
                     el("polyline", { points: p.path.map(q => `${q.x},${q.y}`).join(" "), fill: "none", stroke: p.color,
-                        "stroke-width": 2.5, "stroke-linejoin": "round", "stroke-linecap": "round",
+                        "stroke-width": p.kind === "gnd" ? 3 : 2.5, "stroke-linejoin": "round", "stroke-linecap": "round",
                         ...(p.kind === "col" ? { "stroke-dasharray": "10,6" } : {}),
                         "data-homerun": `${p.kind}:${side}:${p.idx}`, "data-ctrl": side, "data-pin": p.label });
                     el("circle", { cx: p.x, cy: blockTop, r: PIN_R, fill: p.color, "data-ctrl-pin": p.label, "data-ctrl": side });
@@ -1381,7 +1578,7 @@ const UNIT_SIZE = 55; // 1U = 55px
                 blocks.push({ side, innerRight, x1: bx1, x2: bx2, y: blockTop + bh / 2 });
                 extentX = Math.max(extentX, bx2 + 20);
                 extentY = Math.max(extentY, blockTop + bh + 24);
-            });
+            }
             // Link between the two controllers.
             const link = currentJSON.split_link;
             if (isSplit && blocks.length === 2) {
@@ -1398,7 +1595,7 @@ const UNIT_SIZE = 55; // 1U = 55px
         }
 
         // One line under the board dropdown: one controller, or two and how they're linked.
-        function renderBoardInfo(choice) {
+        function renderBoardInfo(choice, directInfo) {
             const info = document.getElementById('boardInfo');
             if (!info) return;
             if (!currentJSON) { info.textContent = ''; return; }
@@ -1410,8 +1607,21 @@ const UNIT_SIZE = 55; // 1U = 55px
             else if (link && link.pin) text = `Two controllers, one per half (same matrix pins on both); TRRS cable on ${link.pin} of each half, plus 5V and GND.`;
             else text = 'Two controllers, one per half (same matrix pins on both).';
             if (isZmkOnly(choice.id)) text += ' ⚠️ nRF52840 boards run ZMK, not QMK/Vial.';
+            if (directInfo) {
+                const { keys, matrix } = directInfo;
+                text += ` Direct wiring: one pin per key (${keys} pins${isSplit ? ' per half' : ''}), every switch's other leg on a shared GND, no diodes.`;
+                if (matrix.pins < keys) text += ` A ${matrix.rows}×${matrix.cols} diode matrix would use fewer pins: ${matrix.pins} vs ${keys}.`;
+            }
             info.textContent = text;
-            if (rightHalfWiring) rightHalfWiring.style.display = (isSplit && currentJSON._source === 'kle') ? '' : 'none';
+            const kle = currentJSON._source === 'kle';
+            if (rightHalfWiring) rightHalfWiring.style.display = (isSplit && kle) ? '' : 'none';
+            if (wiringSelect) {
+                wiringSelect.style.display = kle ? '' : 'none';
+                const layout = extractLayout(currentJSON), rowsPerHalf = directInfo ? directInfo.matrix.rows
+                    : (currentJSON.matrix_pins && currentJSON.matrix_pins.rows || []).length;
+                const right = isSplit ? layout.filter(k => k.matrix && k.matrix[0] >= rowsPerHalf).length : 0;
+                if (kle) offerDirect(wiringSelect, Math.max(layout.length - right, right), freePinsOf(choice.id, isSplit).length);
+            }
         }
 
         function renderKeyboard() {
@@ -1425,11 +1635,25 @@ const UNIT_SIZE = 55; // 1U = 55px
             let activeCols = [];
             const boardChoice = parseBoardChoice(boardSelect.value);
             const selectedProfile = boardChoice.id;
-            renderBoardInfo(boardChoice);
+            // Direct wiring: per-key pins from matrix_pins.direct (left) / the right-hand grid.
+            const direct = directGridsOf(currentJSON);
+            const isSplitBoard = !!(currentJSON.split && (currentJSON.split.enabled ?? true));
+            let directInfo = null;
+            if (direct) {
+                const dims = gridDims(direct.left);
+                const keysOn = side => layout.filter(k => k.matrix && (isSplitBoard && k.matrix[0] >= dims.rows ? 1 : 0) === side).length;
+                directInfo = {
+                    keys: Math.max(keysOn(0), isSplitBoard ? keysOn(1) : 0),
+                    matrix: { rows: dims.rows, cols: dims.cols, pins: dims.rows + dims.cols },
+                };
+            }
+            renderBoardInfo(boardChoice, directInfo);
 
             // Always prefer matrix_pins from the JSON (set by KLE import or uploaded file);
             // fall back to the raw board profile only when no matrix_pins are present.
-            if (currentJSON.matrix_pins) {
+            if (direct) {
+                // no row/column pins
+            } else if (currentJSON.matrix_pins) {
                 activeRows = currentJSON.matrix_pins.rows || [];
                 activeCols = currentJSON.matrix_pins.cols || [];
             } else if (boardProfiles[selectedProfile]) {
@@ -1456,7 +1680,9 @@ const UNIT_SIZE = 55; // 1U = 55px
 
             // Determine actual matrix size from JSON
             let matrixRowsCount = 5; // fallback
-            if (currentJSON.matrix_pins && currentJSON.matrix_pins.rows) {
+            if (direct) {
+                matrixRowsCount = direct.left.length;
+            } else if (currentJSON.matrix_pins && currentJSON.matrix_pins.rows) {
                 matrixRowsCount = currentJSON.matrix_pins.rows.length;
             } else if (currentJSON.matrix_size && currentJSON.matrix_size.rows) {
                 matrixRowsCount = currentJSON.matrix_size.rows;
@@ -1469,7 +1695,7 @@ const UNIT_SIZE = 55; // 1U = 55px
             }
 
             // Matrix and Hardware Validation
-            const validation = validateMatrixIntegrity(layout, selectedProfile, activeRows, activeCols);
+            const validation = validateMatrixIntegrity(layout, selectedProfile, activeRows, activeCols, directInfo, isSplitBoard);
             const warningBanner = document.getElementById('warningBanner');
             let bannerMsg = "";
             if (validation.hardwareError) {
@@ -1504,7 +1730,8 @@ const UNIT_SIZE = 55; // 1U = 55px
             let encoderPositions = [];
             let keyGeo = []; // per-key draw centre + matrix info, for the Amoeba layer / controllers
             let ctrlExtent = null;
-            const amoebaMode = !!(amoebaToggle && amoebaToggle.checked && isBottomView);
+            // The Amoeba layer draws a diode matrix's R/C pads; it has nothing to show for direct wiring.
+            const amoebaMode = !!(amoebaToggle && amoebaToggle.checked && isBottomView) && !direct;
 
             layout.forEach((key, index) => {
                 const div = document.createElement('div');
@@ -1546,8 +1773,14 @@ const UNIT_SIZE = 55; // 1U = 55px
                     const side = r >= matrixRowsCount ? 1 : 0;
                     const normalizedRow = r >= matrixRowsCount ? r - matrixRowsCount : r;
 
-                    rowPin = activeRows[normalizedRow] || "N/A (Pin Limit Exceeded)";
-                    colPin = activeCols[c] || "N/A (Pin Limit Exceeded)";
+                    if (direct) {
+                        // one leg to the key's own pin, the other to the shared GND bus
+                        rowPin = ((side ? direct.right : direct.left)[normalizedRow] || [])[c] || "N/A (Pin Limit Exceeded)";
+                        colPin = "GND";
+                    } else {
+                        rowPin = activeRows[normalizedRow] || "N/A (Pin Limit Exceeded)";
+                        colPin = activeCols[c] || "N/A (Pin Limit Exceeded)";
+                    }
 
                     const cx = (draw_x * UNIT_SIZE) + (w * UNIT_SIZE / 2);
                     const cy = (y * UNIT_SIZE) + (h * UNIT_SIZE / 2);
@@ -1562,7 +1795,8 @@ const UNIT_SIZE = 55; // 1U = 55px
 
                     rowGroups[rowKey].pts.push({x: cx, y: cy - ZONE});
                     colGroups[colKey].pts.push({x: cx, y: cy + ZONE});
-                    const geo = { index, cx, cy, rot: key.rot || 0, side, normRow: normalizedRow, c };
+                    const geo = { index, cx, cy, w: w * UNIT_SIZE, rot: key.rot || 0, side, normRow: normalizedRow, c,
+                        pin: direct && !rowPin.includes("N/A") ? rowPin : null };
                     keyGeo.push(geo);
                     div.addEventListener('mouseenter', () => { if (amoebaMode) amoebaHighlight(geo); });
                     div.addEventListener('mouseleave', () => { if (amoebaMode) amoebaHighlight(null); });
@@ -1586,7 +1820,7 @@ const UNIT_SIZE = 55; // 1U = 55px
                         if (rowPin.includes("N/A") || colPin.includes("N/A")) {
                             tooltipText += "⚠️ ERROR: INSUFFICIENT PINS\nThe MCU does not have enough pins to support this matrix.\n\n";
                         }
-                        tooltipText += `Matrix: Row ${r}, Col ${c}\nPhysical MCU Pins:\nRow -> ${rowPin}\nCol -> ${colPin}`;
+                        tooltipText += direct ? `Direct pin [${r}, ${c}]\nPin -> ${rowPin}\nOther leg -> GND` : `Matrix: Row ${r}, Col ${c}\nPhysical MCU Pins:\nRow -> ${rowPin}\nCol -> ${colPin}`;
                         if (keycode) tooltipText += `\n\nKeycode: ${keycode}`;
                         
                         tooltip.innerText = tooltipText;
@@ -1612,6 +1846,8 @@ const UNIT_SIZE = 55; // 1U = 55px
                             let ea = encIdx === 0 ? enc_a : enc2_a;
                             let eb = encIdx === 0 ? enc_b : enc2_b;
                             tooltip.innerHTML = `📍 **Encoder ${encIdx+1}** (${sideText}) ${viewState}\nMatrix [Row, Col]: ${matrixText} (Click Switch)\n\nSolder Click Row to: 👉 **${rowPin}**\nSolder Click Col to: 👉 **${colPin}**\n\nSolder Rotary Pin A: 👉 **${ea}**\nSolder Rotary Pin B: 👉 **${eb}**`;
+                        } else if (direct) {
+                            tooltip.innerHTML = `📍 **${key.label || 'KEY'}** (${sideText}) ${viewState}${kcText}\nDirect pin [Row, Col]: ${matrixText}\n\nSolder one leg to:   👉 **${rowPin}**\nSolder other leg to: 👉 **GND** (shared bus)\nNo diode.`;
                         } else {
                             tooltip.innerHTML = `📍 **${key.label || 'KEY'}** (${sideText}) ${viewState}${kcText}\nMatrix [Row, Col]: ${matrixText}\n\nSolder Row to:   👉 **${rowPin}**\nSolder Col to:   👉 **${colPin}**`;
                         }
@@ -1691,20 +1927,20 @@ const UNIT_SIZE = 55; // 1U = 55px
                     return;
                 }
 
-                // Draw ROWS: Connect anchors left-to-right
-                Object.values(rowGroups).forEach(group => {
+                // Draw ROWS: Connect anchors left-to-right (none for direct wiring: no matrix)
+                if (!direct) Object.values(rowGroups).forEach(group => {
                     group.pts.sort((a, b) => a.x - b.x);
                     drawChain(group.pts, pinColor(group.pinIdx), ""); // solid
                 });
 
                 // Draw COLS: Connect anchors top-to-bottom
-                Object.values(colGroups).forEach(group => {
+                if (!direct) Object.values(colGroups).forEach(group => {
                     group.pts.sort((a, b) => a.y - b.y);
                     drawChain(group.pts, pinColor(group.pinIdx), "10,6"); // dash
                 });
 
                 // Each half's rows/columns run to that half's own controller.
-                if (keyGeo.length) ctrlExtent = drawControllers(svg, keyGeo, activeRows, activeCols, pinColor, UNIT_SIZE * 0.22);
+                if (keyGeo.length) ctrlExtent = drawControllers(svg, keyGeo, activeRows, activeCols, pinColor, UNIT_SIZE * 0.22, direct);
 
                 stage.appendChild(svg);
             }
@@ -1727,9 +1963,11 @@ const UNIT_SIZE = 55; // 1U = 55px
                 const matrixPins  = currentJSON.matrix_pins || { rows: [], cols: [] };
                 const activeRows  = matrixPins.rows || [];
                 const activeCols  = matrixPins.cols || [];
-                const numRows     = activeRows.length;
-                const numCols     = activeCols.length;
                 const isSplit     = !!(currentJSON.split && (currentJSON.split.enabled ?? true));
+                // Direct wiring: the grid's shape is the matrix size (rows x cols per half).
+                const direct      = directGridsOf(currentJSON);
+                const numRows     = direct ? gridDims(direct.left).rows : activeRows.length;
+                const numCols     = direct ? gridDims(direct.left).cols : activeCols.length;
                 const selectedProfile = parseBoardChoice(boardSelect.value).id;
                 if (isZmkOnly(selectedProfile)) {
                     alert('nice!nano / nRF52840 boards run ZMK, not QMK or Vial, so a Vial ZIP would never build. Pick an RP2040 or Pro Micro board, or set the board up in a ZMK config instead.');
@@ -1800,6 +2038,20 @@ const UNIT_SIZE = 55; // 1U = 55px
                     `// #define SOFT_SERIAL_PIN D2               // for Pro Micro`,
                     `#define SPLIT_USB_DETECT`,
                 ].join('\n') : '';
+                // QMK's own DIRECT_PINS form of a grid (null = NO_PIN), quoted in the config.h comment.
+                const directPinsC = grid => `{ ${grid.map(r => `{ ${r.map(p => p || 'NO_PIN').join(', ')} }`).join(', ')} }`;
+                const pinLines = direct ? [
+                    `// Direct wiring: every switch has its own GPIO and its other leg on a shared GND.`,
+                    `// No diodes and no row/column matrix (so no DIODE_DIRECTION). QMK reads the pins from`,
+                    `// info.json "matrix_pins": {"direct": [...]}${isSplit ? ' and "split": {"matrix_pins": {"right": {"direct": [...]}}}' : ''},`,
+                    `// the same as:`,
+                    `//   #define DIRECT_PINS ${directPinsC(direct.left)}`,
+                    ...(isSplit ? [`//   #define DIRECT_PINS_RIGHT ${directPinsC(direct.right)}`] : []),
+                ] : [
+                    `#define MATRIX_ROW_PINS { ${activeRows.join(', ')} }`,
+                    `#define MATRIX_COL_PINS { ${activeCols.join(', ')} }`,
+                    `#define DIODE_DIRECTION ${diodeDirection}`,
+                ];
                 const configH = [
                     `// SPDX-License-Identifier: GPL-2.0-or-later`,
                     `// Auto-generated by Cubify`,
@@ -1807,10 +2059,8 @@ const UNIT_SIZE = 55; // 1U = 55px
                     ``,
                     `#define MATRIX_ROWS ${logicalRows}`,
                     `#define MATRIX_COLS ${numCols}`,
-                    `#define MATRIX_ROW_PINS { ${activeRows.join(', ')} }`,
-                    `#define MATRIX_COL_PINS { ${activeCols.join(', ')} }`,
-                    `#define DIODE_DIRECTION ${diodeDirection}${splitLine}`,
-                ].join('\n');
+                    ...pinLines,
+                ].join('\n') + splitLine;
 
                 // keyboard.h
                 const keyboardH = [
@@ -1858,11 +2108,13 @@ const UNIT_SIZE = 55; // 1U = 55px
                     usb: { vid: '0xFEED', pid: '0x0000', device_version: '0.0.1' },
                     processor: mcuInfo.mcu,
                     bootloader: mcuInfo.boot,
-                    diode_direction: diodeDirection,
-                    ...(isSplit ? { split: linkPin
-                        ? { enabled: true, serial: { driver: mcuInfo.mcu === 'RP2040' ? 'vendor' : 'bitbang', pin: linkPin } }
-                        : { enabled: true } } : {}),
-                    matrix_pins: { rows: activeRows, cols: activeCols },
+                    ...(direct ? {} : { diode_direction: diodeDirection }), // unused for direct pins
+                    ...(isSplit ? { split: {
+                        enabled: true,
+                        ...(linkPin ? { serial: { driver: mcuInfo.mcu === 'RP2040' ? 'vendor' : 'bitbang', pin: linkPin } } : {}),
+                        ...(direct ? { matrix_pins: { right: { direct: direct.right } } } : {}),
+                    } } : {}),
+                    matrix_pins: direct ? { direct: direct.left } : { rows: activeRows, cols: activeCols },
                     layouts: {
                         [layoutName]: {
                             layout: layout.map(k => {
