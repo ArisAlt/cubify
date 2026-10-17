@@ -191,6 +191,10 @@
             <label for="boardSelect">MCU Profile:</label>
             <select id="boardSelect"><!-- filled by cubify.js: monolithic / split groups --></select>
             <span id="boardInfo" style="font-size: 12px; color: var(--text-sub);"></span>
+            <select id="rightHalfWiring" title="How the right half's columns are wired to the same pin list as the left half" style="display:none; font-size: 12px;">
+                <option value="mirrored" selected>Right half mirrored (outer column = col 0)</option>
+                <option value="same">Right half same direction (left column = col 0)</option>
+            </select>
 
             <label style="margin-left: 15px; display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--text-sub); font-size: 14px; font-weight: bold;">
                 <input type="checkbox" id="showWiring"> Show Wiring
@@ -293,6 +297,6 @@
         </div>
     </div>
 
-    <script src="cubify.js?v=14"></script>
+    <script src="cubify.js?v=17"></script>
 </body>
 </html>

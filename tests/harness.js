@@ -86,6 +86,26 @@ function setView(ctx, { bottom = false, wiring = true, amoeba = false, layers = 
     ctx.app.renderKeyboard();
 }
 
+/** Controller blocks, home-run wires (key → own controller) and the link between controllers. */
+function readControllers(ctx) {
+    const svg = ctx.byId("stage").children.find(c => c.tagName === "svg");
+    if (!svg) return null;
+    const kids = svg.children;
+    const pts = s => s.split(" ").map(p => p.split(",").map(Number));
+    return {
+        blocks: kids.filter(c => c.tagName === "rect" && c.attrs["data-ctrl-block"] !== undefined).map(r => ({
+            side: +r.attrs["data-ctrl-block"], x1: px(r.attrs.x), x2: px(r.attrs.x) + px(r.attrs.width), y: px(r.attrs.y) })),
+        titles: kids.filter(c => c.tagName === "text" && c.attrs["data-ctrl-title"] !== undefined)
+            .map(t => ({ side: +t.attrs["data-ctrl-title"], text: t.textContent })),
+        homeruns: kids.filter(c => c.tagName === "polyline" && c.attrs["data-homerun"]).map(l => {
+            const [kind, side, idx] = l.attrs["data-homerun"].split(":");
+            return { kind, side: +side, idx: +idx, ctrl: +l.attrs["data-ctrl"], pin: l.attrs["data-pin"], path: pts(l.attrs.points) };
+        }),
+        link: kids.filter(c => c.attrs && c.attrs["data-link"]).map(l => ({ type: l.attrs["data-link"] }))[0] || null,
+        linkLabel: (kids.find(c => c.attrs && c.attrs["data-link-label"]) || {}).textContent || null,
+    };
+}
+
 /** Amoeba layer: boards, pads (net/key/pos), wire segments and LED labels. */
 function readAmoeba(ctx) {
     const svg = ctx.byId("stage").children.find(c => c.tagName === "svg");
@@ -136,7 +156,7 @@ function readKeys(ctx) {
 function readWires(ctx) {
     const svg = ctx.byId("stage").children.find(c => c.tagName === "svg");
     if (!svg) return null;
-    const lines = svg.children.filter(c => c.tagName === "line").map(l => ({
+    const lines = svg.children.filter(c => c.tagName === "line" && !c.attrs["data-link"]).map(l => ({
         a: [px(l.attrs.x1), px(l.attrs.y1)], b: [px(l.attrs.x2), px(l.attrs.y2)],
         kind: l.attrs["stroke-dasharray"] ? "col" : "row", color: l.attrs.stroke,
     }));
@@ -181,4 +201,4 @@ async function exportZip(ctx) {
     return files;
 }
 
-module.exports = { load, importKLE, uploadJSON, setView, readAmoeba, readKeys, readWires, wireGroups, parseConfigH, exportZip, UNIT, ZONE };
+module.exports = { load, importKLE, uploadJSON, setView, readAmoeba, readControllers, readKeys, readWires, wireGroups, parseConfigH, exportZip, UNIT, ZONE };

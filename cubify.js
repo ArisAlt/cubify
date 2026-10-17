@@ -99,6 +99,20 @@ const UNIT_SIZE = 55; // 1U = 55px
         const stage = document.getElementById('stage');
 
 
+        // Column numbers follow the PHYSICAL order of the columns (average key x), not the order
+        // the router created them in (a collision can add a column index after the outer one).
+        // fromRight = true numbers from the right edge (a mirrored right half: outer column = 0).
+        function renumberColsByPosition(keys, fromRight) {
+            const cx = k => (k.cx !== undefined ? k.cx : (k.x || 0) + (k.w || 1) / 2);
+            const byCol = {};
+            keys.forEach(k => (byCol[k.matrixCol] = byCol[k.matrixCol] || []).push(cx(k)));
+            const avg = c => byCol[c].reduce((n, x) => n + x, 0) / byCol[c].length;
+            const order = Object.keys(byCol).map(Number).sort((a, b) => fromRight ? avg(b) - avg(a) : avg(a) - avg(b));
+            const remap = new Map(order.map((c, i) => [c, i]));
+            keys.forEach(k => { k.matrixCol = remap.get(k.matrixCol); k.matrix = [k.matrixRow, k.matrixCol]; });
+            return order.length;
+        }
+
         // Use the board's default row/col lists when the matrix fits them and they don't share a
         // pin; otherwise take pins contiguously from the full pool (rows first, then cols).
         // A pin is never handed out twice (a pin on a row AND a column shorts them).
@@ -136,6 +150,7 @@ const UNIT_SIZE = 55; // 1U = 55px
         const kleInput = document.getElementById('kleInput');
         const processKleBtn = document.getElementById('processKleBtn');
         const closeKleModalBtn = document.getElementById('closeKleModalBtn');
+        const rightHalfWiring = document.getElementById('rightHalfWiring');
 
         // Both board dropdowns come from BOARD_META: one group per keyboard type.
         function fillBoardSelect(select, { withJson, withAuto }) {
@@ -452,9 +467,19 @@ const UNIT_SIZE = 55; // 1U = 55px
                         let resLeft  = gridRoute(leftHalves,  0, 0);
                         let resRight = gridRoute(rightHalves, 0, 0);
                         perHalfRows = Math.max(resLeft.numRows, resRight.numRows);
-                        rightHalves.forEach(k => { k.matrixRow += perHalfRows; k.matrix = [k.matrixRow, k.matrixCol]; });
+                        // Both controllers run the same pin list (QMK MATRIX_ROW/COL_PINS). "Mirrored":
+                        // the right half's OUTER column is col 0 like the left's, so each pin wires to
+                        // the matching column of a mirror-image half. "Same direction": col 0 is the
+                        // leftmost column on both halves.
+                        const mirrorRight = !rightHalfWiring || rightHalfWiring.value !== "same";
+                        renumberColsByPosition(leftHalves, false);
+                        const rightCols = renumberColsByPosition(rightHalves, mirrorRight);
+                        rightHalves.forEach(k => {
+                            k.matrixRow += perHalfRows;
+                            k.matrix = [k.matrixRow, k.matrixCol];
+                        });
                         numLogicalRows = perHalfRows * 2;
-                        numLogicalCols = Math.max(resLeft.numCols, resRight.numCols);
+                        numLogicalCols = Math.max(resLeft.numCols, rightCols);
                     } else {
                         // MONOLITHIC layout (Alice, standard TKL, etc.): route the full board as one piece.
                         if (manualKeys.length > 0) {
@@ -462,7 +487,7 @@ const UNIT_SIZE = 55; // 1U = 55px
                         }
                         let res = gridRoute(physicalLayout, 0, 0);
                         numLogicalRows = res.numRows;
-                        numLogicalCols = res.numCols;
+                        numLogicalCols = renumberColsByPosition(physicalLayout, false);
                     }
 
                     // For split keyboards, each MCU only needs perHalfRows + numLogicalCols pins.
@@ -747,7 +772,7 @@ const UNIT_SIZE = 55; // 1U = 55px
 
         // Changing the board re-routes an imported KLE layout for that board / keyboard type;
         // a QMK file keeps its own wiring and pins.
-        boardSelect.addEventListener('change', () => {
+        function rerouteForBoard() {
             if (currentJSON && currentJSON._source === 'kle' && lastKleText && boardSelect.value !== 'json_file') {
                 kleBoardSelect.value = boardSelect.value;
                 kleInput.value = lastKleText;
@@ -756,7 +781,9 @@ const UNIT_SIZE = 55; // 1U = 55px
             } else {
                 renderKeyboard();
             }
-        });
+        }
+        boardSelect.addEventListener('change', rerouteForBoard);
+        if (rightHalfWiring) rightHalfWiring.addEventListener('change', rerouteForBoard);
         showWiringCheckbox.addEventListener('change', renderKeyboard);
 
         viewToggle.addEventListener('click', () => {
@@ -1262,6 +1289,114 @@ const UNIT_SIZE = 55; // 1U = 55px
             amoebaLegend.style.display = 'block';
         }
 
+        // A controller block under each half with every row/column of THAT half run to it
+        // ("home-run" wires), plus the TRRS / wireless link between the two controllers.
+        // Columns drop straight down from their lowest key; rows leave at the half's inner edge,
+        // each in its own lane, so home-runs never run on top of each other.
+        function drawControllers(svg, keyGeo, activeRows, activeCols, pinColor, ZONE) {
+            const NS = "http://www.w3.org/2000/svg";
+            const U = UNIT_SIZE, LANE = 7, PIN_R = 3;
+            const isSplit = !!(currentJSON.split && (currentJSON.split.enabled ?? true));
+            const choice = parseBoardChoice(boardSelect.value);
+            const boardName = (BOARD_META[choice.id] || {}).label || "controller";
+            const sides = [...new Set(keyGeo.map(k => k.side))].sort();
+            const allX = keyGeo.map(k => k.cx), midX = (Math.min(...allX) + Math.max(...allX)) / 2;
+            const el = (tag, attrs, text) => {
+                const e = document.createElementNS(NS, tag);
+                Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, v));
+                if (text !== undefined) e.textContent = text;
+                svg.appendChild(e);
+                return e;
+            };
+            const blocks = [];
+            let extentX = 0, extentY = 0;
+            sides.forEach(side => {
+                const ks = keyGeo.filter(k => k.side === side);
+                const minX = Math.min(...ks.map(k => k.cx)), maxX = Math.max(...ks.map(k => k.cx));
+                const avgX = ks.reduce((n, k) => n + k.cx, 0) / ks.length;
+                // inner edge = toward the other half (split) or the right end (one controller)
+                const innerRight = isSplit ? avgX < midX : true;
+                const rowIds = [...new Set(ks.map(k => k.normRow))].sort((a, b) => a - b);
+                const colIds = [...new Set(ks.map(k => k.c))].sort((a, b) => a - b);
+                // Row lanes go beyond the half's inner edge, into its half of the gap to the other half
+                // (split) or past the right end (one controller). If the halves overlap so there's no
+                // gap (angled halves like an Alice), they go beyond the OUTER edge instead.
+                let towardRight = innerRight;
+                let edge = innerRight ? maxX + U * 0.5 : minX - U * 0.5;
+                let room = rowIds.length * 7;
+                if (isSplit) {
+                    const other = keyGeo.filter(k => k.side !== side).map(k => k.cx);
+                    if (other.length) {
+                        const otherEdge = innerRight ? Math.min(...other) - U * 0.5 : Math.max(...other) + U * 0.5;
+                        room = (innerRight ? otherEdge - edge : edge - otherEdge) / 2 - 3;
+                    }
+                    if (room < rowIds.length * 3) { // no gap: use the outer edge
+                        towardRight = !innerRight;
+                        edge = towardRight ? maxX + U * 0.5 : minX - U * 0.5;
+                        room = towardRight ? rowIds.length * 7 : edge - 4;
+                    }
+                }
+                const dirOut = towardRight ? 1 : -1;
+                const step = Math.max(3, Math.min(7, room / Math.max(rowIds.length, 1)));
+                const blockTop = Math.max(...ks.map(k => k.cy)) + U * 0.8;
+                const pins = [], taken = [];
+                const freeX = x => { while (taken.some(t => Math.abs(t - x) < 4)) x += dirOut * 4; taken.push(x); return x; };
+                // Columns drop straight down from their lowest key; one that would share another's
+                // line jogs sideways to its own.
+                colIds.forEach(c => {
+                    const col = ks.filter(k => k.c === c);
+                    const bottom = col.reduce((m, k) => (k.cy > m.cy ? k : m));
+                    const start = { x: bottom.cx, y: bottom.cy + ZONE }, x = freeX(bottom.cx);
+                    const path = x === bottom.cx ? [start, { x, y: blockTop }]
+                        : [start, { x: bottom.cx, y: start.y + 6 }, { x, y: start.y + 6 }, { x, y: blockTop }];
+                    pins.push({ x, label: activeCols[c] || "?", color: pinColor(activeRows.length + c), kind: "col", idx: c, path });
+                });
+                // Row lanes: bottom row nearest the keys, top row farthest out, so stubs never cross lanes.
+                let cur = edge + dirOut * step / 2;
+                const laneOf = {};
+                for (let i = rowIds.length - 1; i >= 0; i--) { laneOf[rowIds[i]] = freeX(cur); cur = laneOf[rowIds[i]] + dirOut * step; }
+                rowIds.forEach(r => {
+                    const row = ks.filter(k => k.normRow === r);
+                    const inner = row.reduce((m, k) => (towardRight ? k.cx > m.cx : k.cx < m.cx) ? k : m);
+                    const x = laneOf[r], start = { x: inner.cx, y: inner.cy - ZONE };
+                    pins.push({ x, label: activeRows[r] || "?", color: pinColor(r), kind: "row", idx: r,
+                        path: [start, { x, y: start.y }, { x, y: blockTop }] });
+                });
+                const xs = pins.map(p => p.x);
+                const bx1 = Math.max(2, Math.min(...xs) - 14), bx2 = Math.max(...xs) + 14, bh = U * 0.95;
+                el("rect", { x: bx1, y: blockTop, width: bx2 - bx1, height: bh, rx: 6, fill: "rgba(17,17,27,0.92)",
+                    stroke: "#a6adc8", "stroke-width": 1.5, "data-ctrl-block": side });
+                const title = isSplit ? `${side === 0 ? "LEFT" : "RIGHT"} controller · ${boardName}` : `Controller · ${boardName}`;
+                el("text", { x: (bx1 + bx2) / 2, y: blockTop + bh + 13, "text-anchor": "middle", "font-size": 11,
+                    "font-weight": "bold", fill: "#cdd6f4", "data-ctrl-title": side }, title);
+                pins.forEach(p => {
+                    el("polyline", { points: p.path.map(q => `${q.x},${q.y}`).join(" "), fill: "none", stroke: p.color,
+                        "stroke-width": 2.5, "stroke-linejoin": "round", "stroke-linecap": "round",
+                        ...(p.kind === "col" ? { "stroke-dasharray": "10,6" } : {}),
+                        "data-homerun": `${p.kind}:${side}:${p.idx}`, "data-ctrl": side, "data-pin": p.label });
+                    el("circle", { cx: p.x, cy: blockTop, r: PIN_R, fill: p.color, "data-ctrl-pin": p.label, "data-ctrl": side });
+                    el("text", { x: p.x + 3, y: blockTop + 7, "font-size": 8, fill: p.color, "font-weight": "bold",
+                        transform: `rotate(90 ${p.x + 3} ${blockTop + 7})` }, p.label);
+                });
+                blocks.push({ side, innerRight, x1: bx1, x2: bx2, y: blockTop + bh / 2 });
+                extentX = Math.max(extentX, bx2 + 20);
+                extentY = Math.max(extentY, blockTop + bh + 24);
+            });
+            // Link between the two controllers.
+            const link = currentJSON.split_link;
+            if (isSplit && blocks.length === 2) {
+                const [a, b] = blocks.sort((p, q) => p.x1 - q.x1);
+                const x1 = a.x2, x2 = b.x1, y = (a.y + b.y) / 2;
+                const wireless = link && link.type === "wireless";
+                el("line", { x1, y1: y, x2, y2: y, stroke: wireless ? "#89b4fa" : "#f9e2af", "stroke-width": 3,
+                    "stroke-dasharray": wireless ? "2,6" : "", "data-link": wireless ? "wireless" : "trrs" });
+                const label = wireless ? "BLE (wireless, ZMK)" : `TRRS: ${link && link.pin ? link.pin : "serial pin"} ↔ ${link && link.pin ? link.pin : ""} · 5V · GND`;
+                el("text", { x: (x1 + x2) / 2, y: y - 8, "text-anchor": "middle", "font-size": 10, "font-weight": "bold",
+                    fill: wireless ? "#89b4fa" : "#f9e2af", "data-link-label": "1" }, label);
+            }
+            return { extentX, extentY };
+        }
+
         // One line under the board dropdown: one controller, or two and how they're linked.
         function renderBoardInfo(choice) {
             const info = document.getElementById('boardInfo');
@@ -1276,6 +1411,7 @@ const UNIT_SIZE = 55; // 1U = 55px
             else text = 'Two controllers, one per half (same matrix pins on both).';
             if (isZmkOnly(choice.id)) text += ' ⚠️ nRF52840 boards run ZMK, not QMK/Vial.';
             info.textContent = text;
+            if (rightHalfWiring) rightHalfWiring.style.display = (isSplit && currentJSON._source === 'kle') ? '' : 'none';
         }
 
         function renderKeyboard() {
@@ -1366,7 +1502,8 @@ const UNIT_SIZE = 55; // 1U = 55px
             let rowGroups = {};
             let colGroups = {};
             let encoderPositions = [];
-            let keyGeo = []; // per-key draw centre + matrix info, for the Amoeba layer
+            let keyGeo = []; // per-key draw centre + matrix info, for the Amoeba layer / controllers
+            let ctrlExtent = null;
             const amoebaMode = !!(amoebaToggle && amoebaToggle.checked && isBottomView);
 
             layout.forEach((key, index) => {
@@ -1566,11 +1703,14 @@ const UNIT_SIZE = 55; // 1U = 55px
                     drawChain(group.pts, pinColor(group.pinIdx), "10,6"); // dash
                 });
 
+                // Each half's rows/columns run to that half's own controller.
+                if (keyGeo.length) ctrlExtent = drawControllers(svg, keyGeo, activeRows, activeCols, pinColor, UNIT_SIZE * 0.22);
+
                 stage.appendChild(svg);
             }
 
-            stage.style.width = (max_x_logical * UNIT_SIZE + 20) + 'px';
-            stage.style.height = Math.max(max_y * UNIT_SIZE + 20, 250) + 'px';
+            stage.style.width = Math.max(max_x_logical * UNIT_SIZE + 20, ctrlExtent ? ctrlExtent.extentX : 0) + 'px';
+            stage.style.height = Math.max(max_y * UNIT_SIZE + 20, 250, ctrlExtent ? ctrlExtent.extentY : 0) + 'px';
         }
 
 
