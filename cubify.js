@@ -15,26 +15,33 @@ const UNIT_SIZE = 55; // 1U = 55px
             // waveshare_2040_plus GP29 = VSYS sense (not on the header).
             // rp2040_zero: `pins` is the 20 castellated edge GPIOs; GP17-25 are underside pads and are left out.
             // pro_micro: all 18 pool pins are used by the default layout; there is no spare pin for enc2_b, so enc2 is omitted.
-            // rp2040_tiny: pin list is UNVERIFIED against Waveshare's pinout - check the silkscreen/wiki before wiring.
+            // rp2040_tiny: verified against Waveshare's pinout image (wiki RP2040-Tiny): GP0-15 + GP26-29 on the
+            //   castellations, GP16 = WS2812, GP24/25 = user-mode pads. Defaults match the Zero (same 20 pins).
+            // raspberry_pi_pico: 26 header GPIOs (GP0-22, GP26-28); GP23 = SMPS mode, GP24 = VBUS sense,
+            //   GP25 = LED, GP29 = VSYS/3 sense are internal (raspberrypi.com Pico datasheet). Same header as the RP2040-Plus.
+            // nice_nano / clone: the 16 edge pins first; P0.09/P0.10 (NFC) and the inner pad P1.02 only when needed.
             const boardProfiles = {
                 "rp2040_zero":            { rows: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6"], cols: ["GP15","GP14","GP13","GP12","GP11","GP10","GP9"], pins: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6","GP7","GP8","GP9","GP10","GP11","GP12","GP13","GP14","GP15","GP26","GP27","GP28","GP29"], periph: { sda: "GP26", scl: "GP27", enc_a: "GP28", enc_b: "GP29", enc2_a: "GP7", enc2_b: "GP8" } },
-                "rp2040_tiny":            { rows: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6"], cols: ["GP10","GP9","GP8","GP7","GP6","GP5","GP4","GP3","GP2","GP1"], pins: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6","GP7","GP8","GP9","GP10","GP11","GP12","GP13","GP14","GP15","GP26","GP27","GP28","GP29"], periph: { sda: "GP26", scl: "GP27", enc_a: "GP28", enc_b: "GP29", enc2_a: "GP14", enc2_b: "GP15" } },
+                "rp2040_tiny":            { rows: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6"], cols: ["GP15","GP14","GP13","GP12","GP11","GP10","GP9"], pins: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6","GP7","GP8","GP9","GP10","GP11","GP12","GP13","GP14","GP15","GP26","GP27","GP28","GP29"], periph: { sda: "GP26", scl: "GP27", enc_a: "GP28", enc_b: "GP29", enc2_a: "GP7", enc2_b: "GP8" } },
                 "pro_micro":              { rows: ["D4","C6","D7","E6","B4","B5"], cols: ["F4","F5","F6","F7","B1","B3","B2"], pins: ["D4","C6","D7","E6","B4","B5","F4","F5","F6","F7","B1","B3","B2","D2","D3","B6","D1","D0"], periph: { sda: "D1", scl: "D0", enc_a: "D2", enc_b: "D3" } },
-                "nice_nano":              { rows: ["P0.06","P0.08","P0.17","P0.20","P0.22","P0.24"], cols: ["P0.31","P0.29","P0.02","P1.15","P1.13","P1.11","P0.10"], pins: ["P0.06","P0.08","P0.17","P0.20","P0.22","P0.24","P0.31","P0.29","P0.02","P1.15","P1.13","P1.11","P0.10","P0.09","P1.00","P0.11","P1.02","P1.04","P1.06"], periph: { sda: "P1.04", scl: "P1.06", enc_a: "P0.09", enc_b: "P1.00", enc2_a: "P0.11", enc2_b: "P1.02" } },
-                "nrf52840_nicenano_clone": { rows: ["P0.06","P0.08","P0.17","P0.20","P0.22","P0.24"], cols: ["P0.31","P0.29","P0.02","P1.15","P1.13","P1.11","P0.10"], pins: ["P0.06","P0.08","P0.17","P0.20","P0.22","P0.24","P0.31","P0.29","P0.02","P1.15","P1.13","P1.11","P0.10","P0.09","P1.00","P0.11","P1.02","P1.04","P1.06"], periph: { sda: "P1.04", scl: "P1.06", enc_a: "P0.09", enc_b: "P1.00", enc2_a: "P0.11", enc2_b: "P1.02" } },
-                "waveshare_2040_plus":     { rows: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6","GP7","GP8","GP9"], cols: ["GP10","GP11","GP12","GP13","GP14","GP15","GP16","GP17","GP18","GP19","GP20","GP21","GP22","GP26","GP27","GP28"], pins: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6","GP7","GP8","GP9","GP10","GP11","GP12","GP13","GP14","GP15","GP16","GP17","GP18","GP19","GP20","GP21","GP22","GP26","GP27","GP28"], periph: {} }
+                "nice_nano":              { rows: ["P0.06","P0.08","P0.17","P0.20","P0.22","P0.24"], cols: ["P0.31","P0.29","P0.02","P1.15","P1.13","P1.11","P1.00"], pins: ["P0.06","P0.08","P0.17","P0.20","P0.22","P0.24","P0.31","P0.29","P0.02","P1.15","P1.13","P1.11","P1.00","P0.11","P1.04","P1.06","P0.09","P0.10","P1.02"], periph: { sda: "P1.04", scl: "P1.06", enc_a: "P0.09", enc_b: "P1.00", enc2_a: "P0.11", enc2_b: "P1.02" } },
+                "nrf52840_nicenano_clone": { rows: ["P0.06","P0.08","P0.17","P0.20","P0.22","P0.24"], cols: ["P0.31","P0.29","P0.02","P1.15","P1.13","P1.11","P1.00"], pins: ["P0.06","P0.08","P0.17","P0.20","P0.22","P0.24","P0.31","P0.29","P0.02","P1.15","P1.13","P1.11","P1.00","P0.11","P1.04","P1.06","P0.09","P0.10","P1.02"], periph: { sda: "P1.04", scl: "P1.06", enc_a: "P0.09", enc_b: "P1.00", enc2_a: "P0.11", enc2_b: "P1.02" } },
+                "waveshare_2040_plus":     { rows: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6","GP7","GP8","GP9"], cols: ["GP10","GP11","GP12","GP13","GP14","GP15","GP16","GP17","GP18","GP19","GP20","GP21","GP22","GP26","GP27","GP28"], pins: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6","GP7","GP8","GP9","GP10","GP11","GP12","GP13","GP14","GP15","GP16","GP17","GP18","GP19","GP20","GP21","GP22","GP26","GP27","GP28"], periph: {} },
+                "raspberry_pi_pico":       { rows: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6","GP7","GP8","GP9"], cols: ["GP10","GP11","GP12","GP13","GP14","GP15","GP16","GP17","GP18","GP19","GP20","GP21","GP22","GP26","GP27","GP28"], pins: ["GP0","GP1","GP2","GP3","GP4","GP5","GP6","GP7","GP8","GP9","GP10","GP11","GP12","GP13","GP14","GP15","GP16","GP17","GP18","GP19","GP20","GP21","GP22","GP26","GP27","GP28"], periph: {} }
             };
 
             // How each controller is named, and how two of them talk on a split keyboard:
             // "trrs" = wired half-duplex serial over a TRRS/TRS cable on `splitPin` (same pin on both
             // halves, kept out of the matrix); "wireless" = BLE between the halves (ZMK, no pin).
             const BOARD_META = {
-                waveshare_2040_plus:     { label: "Waveshare RP2040-Plus",          link: "trrs", splitPin: "GP28" },
-                rp2040_zero:             { label: "Waveshare RP2040-Zero",          link: "trrs", splitPin: "GP29" },
-                rp2040_tiny:             { label: "Waveshare RP2040-Tiny",          link: "trrs", splitPin: "GP29" },
-                pro_micro:               { label: "Pro Micro (ATmega32U4)",         link: "trrs", splitPin: "D2" },
-                nice_nano:               { label: "nice!nano v2 (nRF52840, ZMK)",   link: "wireless" },
-                nrf52840_nicenano_clone: { label: "SuperMini nRF52840 (ZMK)",       link: "wireless" },
+                // mcu/boot: QMK processor + bootloader. bootButton/resetButton: what the flash guide tells you to press.
+                raspberry_pi_pico:       { label: "Raspberry Pi Pico (RP2040)",     link: "trrs", splitPin: "GP28", mcu: "RP2040", boot: "rp2040", bootButton: "BOOTSEL button", resetButton: null },
+                waveshare_2040_plus:     { label: "Waveshare RP2040-Plus",          link: "trrs", splitPin: "GP28", mcu: "RP2040", boot: "rp2040", bootButton: "BOOT button", resetButton: "RESET" },
+                rp2040_zero:             { label: "Waveshare RP2040-Zero",          link: "trrs", splitPin: "GP29", mcu: "RP2040", boot: "rp2040", bootButton: "BOOT button", resetButton: "RESET" },
+                rp2040_tiny:             { label: "Waveshare RP2040-Tiny",          link: "trrs", splitPin: "GP29", mcu: "RP2040", boot: "rp2040", bootButton: "BOOT button (on its USB-C adapter board)", resetButton: "RESET (on the adapter)" },
+                pro_micro:               { label: "Pro Micro (ATmega32U4)",         link: "trrs", splitPin: "D2", mcu: "atmega32u4", boot: "caterina" },
+                nice_nano:               { label: "nice!nano v2 (nRF52840, ZMK)",   link: "wireless", mcu: "nRF52840" },
+                nrf52840_nicenano_clone: { label: "SuperMini nRF52840 (ZMK)",       link: "wireless", mcu: "nRF52840" },
             };
             // Dropdown values: "<board>" = one controller, "split:<board>" = two controllers.
             const parseBoardChoice = v => {
@@ -1050,6 +1057,7 @@ const UNIT_SIZE = 55; // 1U = 55px
         // Where the LED chain's + and − come from on each controller (SK6812MINI wants ~5 V).
         const LED_SUPPLY = {
             waveshare_2040_plus: { vdd: "VBUS (pin 40)", vss: "GND (pin 38)", vddShort: "VBUS p40", vssShort: "GND p38" },
+            raspberry_pi_pico: { vdd: "VBUS (pin 40)", vss: "GND (pin 38)", vddShort: "VBUS p40", vssShort: "GND p38" },
             rp2040_zero: { vdd: "5V", vss: "GND" },
             rp2040_tiny: { vdd: "5V", vss: "GND" },
             pro_micro: { vdd: "VCC", vss: "GND" },
@@ -2193,15 +2201,11 @@ const UNIT_SIZE = 55; // 1U = 55px
             const diodeDirection = (amoebaToggle && amoebaToggle.checked) ? 'ROW2COL' : 'COL2ROW';
 
             // MCU detection from board profile
-            const mcuMap = {
-                rp2040_zero:             { mcu: 'RP2040',     boot: 'rp2040'      },
-                rp2040_tiny:             { mcu: 'RP2040',     boot: 'rp2040'      },
-                waveshare_2040_plus:     { mcu: 'RP2040',     boot: 'rp2040'      },
-                pro_micro:               { mcu: 'atmega32u4', boot: 'caterina'    },
-                nice_nano:               { mcu: 'nRF52840',   boot: 'nrfmicro_13' },
-                nrf52840_nicenano_clone: { mcu: 'nRF52840',   boot: 'nrfmicro_13' },
-            };
-            const mcuInfo = mcuMap[selectedProfile] || { mcu: 'RP2040', boot: 'rp2040' };
+            // QMK processor/bootloader: the chosen board's (BOARD_META), else an uploaded QMK file's own.
+            const meta = BOARD_META[selectedProfile];
+            const mcuInfo = meta && meta.boot ? { mcu: meta.mcu, boot: meta.boot }
+                : currentJSON.processor && currentJSON.bootloader ? { mcu: currentJSON.processor, boot: currentJSON.bootloader } : null;
+            if (!mcuInfo) { alert(`Pick a QMK board (RP2040 or Pro Micro) in MCU Profile before exporting ${what}.`); return null; }
 
             // Keyboard folder name
             const kbName = (currentJSON.keyboard_name || 'custom_handwired')
@@ -2444,7 +2448,7 @@ const UNIT_SIZE = 55; // 1U = 55px
             const what = { via: 'a VIA firmware', qmk: 'a QMK firmware', vial: 'a Vial firmware' }[target];
             const spec = firmwareSpec(what);
             if (!spec) return null;
-            const { layout, isSplit, direct, logicalRows, numCols, unlock, mcuInfo, kbName, layoutName, pid, keyboardJSON, configH } = spec;
+            const { layout, isSplit, direct, logicalRows, numCols, unlock, mcuInfo, kbName, layoutName, pid, keyboardJSON, configH, selectedProfile } = spec;
             const { layers, unknown, fromKeymap } = firmwareLayers(layout);
             const keymapC = keymapSource(layoutName, layers);
             const appLayout = {
@@ -2458,6 +2462,7 @@ const UNIT_SIZE = 55; // 1U = 55px
             const fw = {
                 kbName, target, km: target === 'qmk' ? 'default' : target, qmkKb: `handwired/${kbName}`, unknown, fromKeymap,
                 mcu: mcuInfo.mcu, isSplit, direct, unlock, pid, name: appLayout.name, bootmagic: true,
+                buttons: BOARD_META[selectedProfile] || {},
             };
             const lto = mcuInfo.mcu === 'atmega32u4' ? [`LTO_ENABLE = yes  # ${target === 'vial' ? 'Vial' : 'VIA'} needs the room on a Pro Micro`] : [];
             // 8-byte random Vial keyboard ID (Vial's docs generate one per keyboard)
@@ -2545,9 +2550,10 @@ const UNIT_SIZE = 55; // 1U = 55px
             const zipName = `${fw.kbName}_${fw.target}.zip`;
             const key = m => `[${m}]`;
             const halves = fw.isSplit ? ' Each half has its own controller: do this for both halves, one at a time.' : '';
-            const later = fw.bootmagic
-                ? ` Once this firmware is on it, you can also hold key ${key(fw.unlock[0])} while plugging in (Bootmagic)${rp ? ', or double-tap RESET' : ''}.`
-                : rp ? ' Once this firmware is on it, double-tapping RESET also works.' : '';
+            const btn = fw.buttons || {};
+            const bootBtn = btn.bootButton || 'BOOT button';
+            const reset = btn.resetButton === undefined ? 'RESET' : btn.resetButton; // null: the board has none (Pico)
+            const later = ` Once this firmware is on it, you can also hold key ${key(fw.unlock[0])} while plugging in (Bootmagic)${rp && reset ? `, or double-tap ${reset}` : ''}.`;
             const steps = [];
             steps.push(vial ? {
                 title: 'Get vial-qmk (once)',
@@ -2568,7 +2574,7 @@ const UNIT_SIZE = 55; // 1U = 55px
             steps.push(rp ? {
                 title: 'Put the controller in bootloader mode',
                 cmds: [],
-                notes: [`Unplug it, hold its BOOT button, plug the USB cable back in, then let go: a drive called RPI-RP2 appears.${later}`],
+                notes: [`Unplug it, hold its ${bootBtn}, plug the USB cable back in, then let go: a drive called RPI-RP2 appears.${later}`],
             } : {
                 title: 'Get ready to reset the Pro Micro',
                 cmds: [],

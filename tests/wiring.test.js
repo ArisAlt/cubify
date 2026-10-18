@@ -5,11 +5,7 @@ const assert = require("node:assert/strict");
 const h = require("./harness");
 const fx = require("./fixtures");
 
-// Pins that must never be used for the matrix, per board (see skills/keyboard-handwiring).
-const RESERVED = {
-    rp2040_zero: ["GP16"], rp2040_tiny: ["GP16"], waveshare_2040_plus: ["GP23", "GP24", "GP25", "GP29"],
-    pro_micro: ["B0", "B7", "D5", "E2"], nice_nano: ["P0.13", "P0.15"], nrf52840_nicenano_clone: ["P0.13", "P0.15"],
-};
+const RESERVED = fx.RESERVED;
 
 const name = k => k.key.label || `#${k.i}@(${k.key.x},${k.key.y})`;
 
@@ -201,7 +197,7 @@ describe("AliceZero (real board, KLE import)", () => {
 });
 
 describe("monolithic layouts", () => {
-    const boards = ["waveshare_2040_plus", "rp2040_zero", "rp2040_tiny", "pro_micro", "nice_nano"];
+    const boards = ["raspberry_pi_pico", "waveshare_2040_plus", "rp2040_zero", "rp2040_tiny", "pro_micro", "nice_nano", "nrf52840_nicenano_clone"];
     for (const board of boards) {
         test(`5×8 ortho on ${board}`, async () => checkBoard(h.importKLE(fx.ortho(5, 8), { board })));
     }
@@ -214,7 +210,7 @@ describe("monolithic layouts", () => {
 });
 
 describe("split layouts", () => {
-    for (const board of ["rp2040_zero", "pro_micro", "waveshare_2040_plus"]) {
+    for (const board of ["raspberry_pi_pico", "rp2040_zero", "rp2040_tiny", "pro_micro", "waveshare_2040_plus"]) {
         test(`2 × (4×6) ortho on ${board}`, async () =>
             checkBoard(h.importKLE(fx.ortho(4, 6, { gap: 3 }), { split: true, board }), { split: true }));
     }

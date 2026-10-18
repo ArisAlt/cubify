@@ -64,4 +64,12 @@ function qmkSplitUpload() {
     };
 }
 
-module.exports = { alice, test2, ortho, lilyLike, manualSplit, holeyTopRow, qmkSplitUpload };
+// Pins that must never be used for the matrix, per board (see skills/keyboard-handwiring, Waveshare and
+// Raspberry Pi pinouts). Every board in BOARD_META needs an entry (boards-switch.test.js checks).
+const RESERVED = {
+    rp2040_zero: ["GP16"], rp2040_tiny: ["GP16", "GP24", "GP25"], waveshare_2040_plus: ["GP23", "GP24", "GP25", "GP29"],
+    raspberry_pi_pico: ["GP23", "GP24", "GP25", "GP29"],
+    pro_micro: ["B0", "B7", "D5", "E2"], nice_nano: ["P0.13", "P0.15"], nrf52840_nicenano_clone: ["P0.13", "P0.15"],
+};
+
+module.exports = { RESERVED, alice, test2, ortho, lilyLike, manualSplit, holeyTopRow, qmkSplitUpload };

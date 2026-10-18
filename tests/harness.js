@@ -52,7 +52,7 @@ function load({ split = false, board = "auto", wiring = null } = {}) {
     byId("amoebaZoom").value = "2";
 
     const factory = new Function("document", "window", "alert", "JSZip", "URL", "FileReader",
-        SRC + "\n;return { get currentJSON(){ return currentJSON; }, renderKeyboard, boardProfiles," +
+        SRC + "\n;return { get currentJSON(){ return currentJSON; }, renderKeyboard, boardProfiles, BOARD_META, ledSupply," +
         " get isBottomView(){ return isBottomView; } };");
     const app = factory(document, {}, m => alerts.push(String(m)), JSZip, URL, FileReader);
     // cubify.js builds both board dropdowns at load; pick like a user would.
