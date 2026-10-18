@@ -95,7 +95,10 @@ function readControllers(ctx) {
     const pts = s => s.split(" ").map(p => p.split(",").map(Number));
     return {
         blocks: kids.filter(c => c.tagName === "rect" && c.attrs["data-ctrl-block"] !== undefined).map(r => ({
-            side: +r.attrs["data-ctrl-block"], x1: px(r.attrs.x), x2: px(r.attrs.x) + px(r.attrs.width), y: px(r.attrs.y) })),
+            side: +r.attrs["data-ctrl-block"], x1: px(r.attrs.x), x2: px(r.attrs.x) + px(r.attrs.width), y: px(r.attrs.y),
+            y2: px(r.attrs.y) + px(r.attrs.height) })),
+        pinLabels: kids.filter(c => c.tagName === "text" && c.attrs["data-pin-label"] !== undefined)
+            .map(t => ({ text: t.textContent, x: px(t.attrs.x), y: px(t.attrs.y) })),
         titles: kids.filter(c => c.tagName === "text" && c.attrs["data-ctrl-title"] !== undefined)
             .map(t => ({ side: +t.attrs["data-ctrl-title"], text: t.textContent })),
         homeruns: kids.filter(c => c.tagName === "polyline" && c.attrs["data-homerun"]).map(l => {
