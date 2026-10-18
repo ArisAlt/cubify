@@ -196,9 +196,10 @@ function parseConfigH(txt) {
     };
 }
 
-async function exportZip(ctx) {
+/** Press an export button (Vial ZIP by default) and return its files, keyed by path inside the keyboard folder. */
+async function exportZip(ctx, button = "exportVialZipBtn") {
     for (const k of Object.keys(ctx.zipFiles)) delete ctx.zipFiles[k];
-    ctx.byId("exportVialZipBtn").click();
+    ctx.byId(button).click();
     await Promise.resolve();
     const files = {};
     for (const [k, v] of Object.entries(ctx.zipFiles)) files[k.split("/").slice(1).join("/")] = v;

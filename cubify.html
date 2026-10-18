@@ -209,6 +209,11 @@
             <button id="viewToggle">👀 View: Top (Keycaps)</button>
             <button id="clearAllBtn" style="margin-left: 10px; background: var(--red, #f38ba8); color: #11111b; font-weight: bold;">🗑️ Clear All</button>
             <button id="exportVialZipBtn" style="margin-left: 10px; background: var(--green, #a6e3a1); color: #11111b; font-weight: bold; display: none;">📦 Export Vial ZIP</button>
+            <select id="firmwareTarget" title="Firmware to export: VIA (remap keys live in usevia.app) or plain QMK" style="margin-left: 10px; display: none;">
+                <option value="via" selected>VIA firmware</option>
+                <option value="qmk">QMK firmware</option>
+            </select>
+            <button id="exportFirmwareBtn" title="Download a QMK keyboard folder (keyboard.json, keymaps, build.sh; via.json for VIA) built from the wiring shown" style="background: var(--blue, #89b4fa); color: #11111b; font-weight: bold; display: none;">⚙️ Export firmware</button>
 
         </div>
     </div>
@@ -281,6 +286,17 @@
     </div>
 
 
+    <!-- QMK / VIA firmware: build + flash steps (filled by cubify.js after the ZIP download) -->
+    <div id="firmwareModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:200; align-items:center; justify-content:center;">
+        <div style="background:var(--panel-bg); border:1px solid var(--blue, #89b4fa); border-radius:12px; padding:28px; width:640px; max-width:92%; max-height:90vh; overflow-y:auto; font-size:14px; line-height:1.6;">
+            <h3 style="margin-top:0; color:var(--blue, #89b4fa);">⚙️ Firmware downloaded: build &amp; flash</h3>
+            <div id="firmwareModalBody"></div>
+            <div style="display:flex; justify-content:flex-end; margin-top:16px;">
+                <button id="closeFirmwareBtn" style="background:var(--blue,#89b4fa); color:#11111b; font-weight:bold; padding:8px 20px;">Got it ✓</button>
+            </div>
+        </div>
+    </div>
+
     <div id="kleModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:100; align-items:center; justify-content:center;">
         <div style="background:var(--bg); border:1px solid var(--peach, #fab387); border-radius:8px; padding:20px; width:600px; max-width:90%;">
             <h3 style="margin-top:0; color:var(--peach, #fab387);">Import KLE Layout</h3>
@@ -305,6 +321,6 @@
         </div>
     </div>
 
-    <script src="cubify.js?v=25"></script>
+    <script src="cubify.js?v=27"></script>
 </body>
 </html>

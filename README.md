@@ -21,9 +21,10 @@
 - **Interactive Tooltips**: Hover over keys to see exact matrix coordinates `[row, col]` and the specific pins to solder for your selected MCU.
 - **Hardware Peripherals Panel**: Dynamically displays recommended or JSON-configured pins for OLED displays (I2C SDA/SCL) and Rotary Encoders (Pin A/Pin B).
 - **Interactive Encoder Assignment**: Click the "🎯 Assign Encoders" button to convert any key in the visualizer into a Rotary Encoder, visually transforming it and updating its wiring tooltips.
-- **Export Capabilities**:
-  - **💾 Save JSON**: Instantly inject your encoder and I2C pin assignments into your `keyboard.json` and download the updated layout file.
-  - **📄 Copy C Code**: Generates standard QMK `encoder_update_user` boilerplate for your `keymap.c` file based on your assigned encoders.
+- **Firmware export** (after importing a layout), always from the matrix and pins on screen; exporting never re-routes, so the firmware matches the wiring you soldered:
+  - **⚙️ Export firmware → VIA or QMK**: a ZIP with a QMK keyboard folder: data-driven `keyboard.json` (pins, matrix, split, direct pins, USB IDs, Bootmagic key), `keymaps/default` and, for VIA, `keymaps/via` (`VIA_ENABLE`) plus `via.json`, which keeps the KLE's rotation and is loaded in usevia.app → Design tab. `build.sh` copies the folder to `keyboards/handwired/<name>` in `~/qmk_firmware` (or `$QMK_HOME`) and runs `qmk compile`. Layer 0 comes from the KLE legends (`!`/`1` → `KC_1`, `Shift` on the right → `KC_RSFT`, a blank wide key → space, `Fn` → `MO(1)`); unknown legends become `KC_NO` and are listed in `BUILD.md`. A loaded `keymap.c` is used instead when present. AliceZero builds this way with no warnings (VIA and QMK), as do a 2× Pro Micro split and a direct-wired pad.
+  - **📦 Export Vial ZIP**: the same keyboard for vial-qmk (`keymaps/vial`, `vial.json`, unlock combo).
+- **KLE files straight from the editor**: a raw KLE `.json` (e.g. exported from editor.keyboard-tools.xyz, like `AliceZero.json`) can be picked in *Local JSON*; it's auto-routed like *Import KLE*, on the board chosen in *MCU Profile*, and named from the KLE's own `name`.
 - **Standalone App**: Entirely contained in a single HTML file—no server or installation required.
 - **🧬 Amoeba PCBs layer**: draws every key as an [Amoeba Royale v2.0](https://github.com/mtl/keyboard-pcbs/tree/master/amoeba-royale) single-key PCB on the solder side, with pads in their real positions (rotated with angled keys) and pad-to-pad wiring: rows on the R pads, columns on the C pads, and the per-key LED chain (DOUT → DIN, numbered L0…Ln, one chain per split half) with LED +/− following it. The first LED's data pin is the first free MCU pin; its board also shows where LED + and − connect (e.g. `+ VBUS p40` / `− GND p38` on the RP2040-Plus, `5V`/`GND` on RP2040-Zero/Tiny, `VCC`/`GND` on Pro Micro and nice!nano). While ticked, the Vial export uses `DIODE_DIRECTION ROW2COL`, because the Amoeba's on-board diode has its anode on the R pad. Like the Show Wiring bottom view, it draws a controller block under each half with its pins: every row home-run leaves from an R pad, every column from the lowest board's C pad, and the LED data, LED + and LED − wires run from the first LED board's DIN/VDD/VSS pads to their controller pins; on splits each half has its own controller and the TRRS link sits between them. Pin labels never overlap.
   - **Readable by design:** layer switches (Rows · Columns · LED data · LED power · Unused pads; power and unused pads off by default), a 🔍 size slider (100–400%), and hover tracing — point at a key to see only its row, column and LED neighbours.
@@ -32,10 +33,9 @@
 ## Usage
 
 1. Open `cubify.html` in any modern web browser.
-2. Click the file input to upload your `keyboard.json` layout file.
-3. Select your microcontroller profile from the dropdown.
-4. Toggle the view to "Bottom (Wiring/Solder)" when you are ready to solder.
-5. Hover over any key to view the matrix positions and target pins.
+2. Pick your controller in *MCU Profile*, then load the layout: a KLE `.json` or QMK `keyboard.json` in *Local JSON*, or paste KLE into *Import KLE*.
+3. Tick *Show Wiring* (or switch to the bottom/solder view) and wire rows, columns and pins as drawn. Hover a key for its matrix position and pins.
+4. Choose *VIA firmware* or *QMK firmware* and press *⚙️ Export firmware*; unzip and run `./build.sh`, then flash the `.uf2`/`.hex`.
 
 ## Testing
 
@@ -52,6 +52,7 @@ They import `AliceZero.json` and generated split/monolithic layouts on every boa
 - each drawn wire connects exactly the keys of one row/column (never across split halves) and keeps one colour per pin;
 - the bottom (solder) view only mirrors positions — pins and wires are unchanged;
 - the exported `config.h`, `info.json` and `vial.json` match what's on screen, including split `MATRIX_ROWS` and a Vial unlock combo on keys that exist;
+- the QMK/VIA export keeps the on-screen pins and matrix (exporting changes nothing), starts the layout at 0,0, maps AliceZero's legends to keycodes, writes a `via.json` with the same IDs, matrix and keys, and handles splits, direct wiring, a loaded keymap.c and ZMK-only boards;
 - with direct wiring, every key gets its own pin in reading order (gaps are `null`), each key's home-run ends on its own controller pin and no two wires touch (GND bus included, top and bottom view), the export carries `matrix_pins.direct` / `split.matrix_pins.right.direct` without `diode_direction`, and over-budget layouts warn and mark the extra keys N/A;
 - in the Amoeba layer, every wire joins pads of the same net (no shorts), rows/columns follow the matrix, the LED chain visits every key once DOUT → DIN, boards turn with angled keys, the export switches to ROW2COL, both routing rules hold (no wire over a foreign pad anywhere; 2 px dead zone on AliceZero and test2), there are no needless detours, and the layer switches, hover tracing and size slider behave.
 

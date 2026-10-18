@@ -90,6 +90,7 @@ const UNIT_SIZE = 55; // 1U = 55px
                 if (existingSvg) existingSvg.remove();
                 warningBanner.style.display = 'none';
                 exportVialZipBtn.style.display = 'none';
+                showFirmwareExport(false);
                 if (fetchKeymapBtn) fetchKeymapBtn.style.display = 'none';
                 layerSelect.style.display = 'none';
                 parsedKeymaps = null;
@@ -202,6 +203,14 @@ const UNIT_SIZE = 55; // 1U = 55px
             return coords.length >= 2 ? [coords[0], coords[1]] : [[0, 0], [0, 1]];
         }
 
+        // The QMK / VIA firmware export controls appear with the Vial button (after a KLE import).
+        function showFirmwareExport(on) {
+            ['firmwareTarget', 'exportFirmwareBtn'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.style.display = on ? 'inline-block' : 'none';
+            });
+        }
+
         function extractLayout(jsonObj) {
             if (jsonObj && jsonObj.layouts && Object.keys(jsonObj.layouts).length > 0) {
                 const firstLayoutKey = Object.keys(jsonObj.layouts)[0];
@@ -210,23 +219,38 @@ const UNIT_SIZE = 55; // 1U = 55px
             return [];
         }
 
-        // KLE text → flat physical layout (rotations folded into absolute x/y; logical_x/y kept
-        // for row grouping; a "row,col" top-left label becomes a manual matrix override).
-        function parseKle(rawText) {
+        // The layout's own name from KLE metadata ({"name": "AliceZero", ...}), if it has one.
+        function kleName(rawText) {
+            try {
+                const meta = parseKleText(rawText).find(r => r && typeof r === 'object' && !Array.isArray(r));
+                return meta && typeof meta.name === 'string' && meta.name.trim() ? meta.name.trim() : null;
+            } catch (e) { return null; }
+        }
+
+        // KLE text (strict JSON or KLE's looser JS-style syntax) → the KLE array.
+        function parseKleText(rawText) {
             // Try parsing KLE JSON. Some users copy raw strings, so eval is needed if it's not strict JSON
             // (KLE JSON uses single quotes or unquoted keys sometimes, standard JSON.parse fails)
             // A safer regex replacement:
             let jsonText = rawText.replace(/(['"])?([a-z0-9A-Z_]+)(['"])?:/g, '"$2": ').replace(/'/g, '"');
             let kleData;
             try {
+                kleData = JSON.parse(rawText); // strict JSON first: legends stay exactly as written
+            } catch (e0) { try {
                 kleData = JSON.parse(jsonText);
             } catch (e) {
                 // Fallback to Function constructor (safer than eval) if KLE format is loose
                 kleData = (new Function("return " + rawText))();
-            }
+            } }
 
             if (!Array.isArray(kleData)) throw new Error("Invalid KLE format. Must be an array of arrays.");
+            return kleData;
+        }
 
+        // KLE text → flat physical layout (rotations folded into absolute x/y; logical_x/y kept
+        // for row grouping; a "row,col" top-left label becomes a manual matrix override).
+        function parseKle(rawText) {
+            const kleData = parseKleText(rawText);
             let physicalLayout = [];
             let rx = 0, ry = 0, r = 0;
             let x = 0, y = 0;
@@ -287,6 +311,7 @@ const UNIT_SIZE = 55; // 1U = 55px
                             h: h,
                             rot: r,
                             label: primaryLabel,
+                            legends: rawLabels, // all KLE legend slots (layer 0 keycodes come from these)
                             matrixOverride: matrixOverride
                         });
 
@@ -679,7 +704,7 @@ const UNIT_SIZE = 55; // 1U = 55px
 
                     // Build QMK JSON
                     currentJSON = {
-                        keyboard_name: "Auto-Routed KLE Board",
+                        keyboard_name: kleName(rawText) || "Auto-Routed KLE Board",
                         manufacturer: "Custom Handwired",
                         // direct wiring has no diodes, so no diode_direction
                         ...(direct ? {} : { diode_direction: "COL2ROW" }),
@@ -714,6 +739,7 @@ const UNIT_SIZE = 55; // 1U = 55px
                     kleModal.style.display = 'none';
                     renderKeyboard();
                     exportVialZipBtn.style.display = 'inline-block';
+                    showFirmwareExport(true);
                     if (!quietReroute) alert("KLE layout successfully imported and auto-routed!");
 
                 } catch (e) {
@@ -729,7 +755,16 @@ const UNIT_SIZE = 55; // 1U = 55px
             const reader = new FileReader();
             reader.onload = function(event) {
                 try {
-                    currentJSON = JSON.parse(event.target.result);
+                    const parsed = JSON.parse(event.target.result);
+                    if (Array.isArray(parsed)) {
+                        // A raw KLE layout (e.g. exported from editor.keyboard-tools.xyz): auto-route it like
+                        // "Import KLE", on the board picked in the main dropdown (else best fit).
+                        if (boardSelect.value !== 'json_file') kleBoardSelect.value = boardSelect.value;
+                        kleInput.value = event.target.result;
+                        processKleBtn.click();
+                        return;
+                    }
+                    currentJSON = parsed;
                     
                     // Auto-detect MCU profile based on matrix pins if currently set to "Read Pins from JSON"
                     if (boardSelect.value === "json_file" && currentJSON.matrix_pins && currentJSON.matrix_pins.rows && currentJSON.matrix_pins.cols) {
@@ -2115,63 +2150,421 @@ const UNIT_SIZE = 55; // 1U = 55px
 
 
         // ============================================================
+        // FIRMWARE EXPORTS (Vial ZIP, QMK / VIA ZIP)
+        // ============================================================
+        // What every firmware export shares, taken from the layout and pins on screen: the export
+        // never re-routes, so the firmware matches the wiring already drawn (and soldered).
+        // null (after an alert saying why) when there's nothing that would build.
+        function firmwareSpec(what) {
+            if (!currentJSON) { alert('No layout loaded. Import a KLE first.'); return null; }
+            if (typeof JSZip === 'undefined') { alert('JSZip not loaded. Check internet connection.'); return null; }
+            const layout      = extractLayout(currentJSON);
+            const matrixPins  = currentJSON.matrix_pins || { rows: [], cols: [] };
+            const activeRows  = matrixPins.rows || [];
+            const activeCols  = matrixPins.cols || [];
+            const isSplit     = !!(currentJSON.split && (currentJSON.split.enabled ?? true));
+            // Direct wiring: the grid's shape is the matrix size (rows x cols per half).
+            const direct      = directGridsOf();
+            const numRows     = direct ? gridDims(direct.left).rows : activeRows.length;
+            const numCols     = direct ? gridDims(direct.left).cols : activeCols.length;
+            const selectedProfile = parseBoardChoice(boardSelect.value).id;
+            if (isZmkOnly(selectedProfile)) {
+                alert(`nice!nano / nRF52840 boards run ZMK, not QMK, VIA or Vial, so ${what} would never build. Pick an RP2040 or Pro Micro board, or set the board up in a ZMK config instead.`);
+                return null;
+            }
+            const linkPin = currentJSON.split_link && currentJSON.split_link.pin;
+            // Splits declare each side's pins explicitly, even when both use the same list.
+            // (Direct wiring has no row/column lists: its right grid goes in split.matrix_pins.right.direct.)
+            const ownRightPins = isSplit && !direct ? rightHalfPins() : null;
+            const rightPins = isSplit && !direct ? (ownRightPins || { rows: activeRows, cols: activeCols }) : null;
+
+            // Logical matrix size. Split: QMK scans left rows then right rows, so
+            // MATRIX_ROWS = 2 x row pins per half (matrix_pins.rows lists one half).
+            const logicalRows = isSplit ? numRows * 2 : numRows;
+            const unlock = pickUnlockKeys(layout);
+            // Amoeba Royale's on-board diode has its anode on the row pad → ROW2COL.
+            const diodeDirection = (amoebaToggle && amoebaToggle.checked) ? 'ROW2COL' : 'COL2ROW';
+
+            // MCU detection from board profile
+            const mcuMap = {
+                rp2040_zero:             { mcu: 'RP2040',     boot: 'rp2040'      },
+                rp2040_tiny:             { mcu: 'RP2040',     boot: 'rp2040'      },
+                waveshare_2040_plus:     { mcu: 'RP2040',     boot: 'rp2040'      },
+                pro_micro:               { mcu: 'atmega32u4', boot: 'caterina'    },
+                nice_nano:               { mcu: 'nRF52840',   boot: 'nrfmicro_13' },
+                nrf52840_nicenano_clone: { mcu: 'nRF52840',   boot: 'nrfmicro_13' },
+            };
+            const mcuInfo = mcuMap[selectedProfile] || { mcu: 'RP2040', boot: 'rp2040' };
+
+            // Keyboard folder name
+            const kbName = (currentJSON.keyboard_name || 'custom_handwired')
+                .toLowerCase().replace(/[^a-z0-9]/g, '_');
+            const layoutName = currentJSON.layouts
+                ? (Object.keys(currentJSON.layouts)[0] || 'LAYOUT')
+                : 'LAYOUT';
+
+            // Keyboard-level config.h
+            const splitLine = isSplit && linkPin ? [
+                ``,
+                `// Split keyboard: two controllers, one firmware (flash the same file to both halves).`,
+                `// Link: half-duplex serial over the TRRS cable on ${linkPin} of each half (split.serial in`,
+                `// info.json). Wire tip/ring/sleeve the same on both halves; never hot-plug the cable.`,
+                `#define SPLIT_USB_DETECT`,
+                `// Handedness: the half with USB plugged in is the left (master) half.`,
+                `// To plug USB into either half, use EE_HANDS instead and flash each half once with`,
+                `// :uf2-split-left / :uf2-split-right (RP2040) or :dfu-split-left/right / :avrdude-split-left/right.`,
+                `#define MASTER_LEFT`,
+            ].join('\n') : isSplit ? [
+                ``,
+                `// Split keyboard — REQUIRED: configure your serial/TRRS communication pin`,
+                `// Uncomment and set the correct TX pin for your wiring:`,
+                `// #define SERIAL_USART_FULL_DUPLEX         // use for UART (full duplex)`,
+                `// #define SERIAL_USART_TX_PIN GP0          // TX pin on left half`,
+                `// #define SERIAL_USART_RX_PIN GP1          // RX pin on right half`,
+                `// Or for simple single-wire (half-duplex):`,
+                `// #define SOFT_SERIAL_PIN D2               // for Pro Micro`,
+                `#define SPLIT_USB_DETECT`,
+            ].join('\n') : '';
+            // QMK's own DIRECT_PINS form of a grid (null = NO_PIN), quoted in the config.h comment.
+            const directPinsC = grid => `{ ${grid.map(r => `{ ${r.map(p => p || 'NO_PIN').join(', ')} }`).join(', ')} }`;
+            const pinLines = direct ? [
+                `// Direct wiring: every switch has its own GPIO and its other leg on a shared GND.`,
+                `// No diodes and no row/column matrix (so no DIODE_DIRECTION). QMK reads the pins from`,
+                `// info.json "matrix_pins": {"direct": [...]}${isSplit ? ' and "split": {"matrix_pins": {"right": {"direct": [...]}}}' : ''},`,
+                `// the same as:`,
+                `//   #define DIRECT_PINS ${directPinsC(direct.left)}`,
+                ...(isSplit ? [`//   #define DIRECT_PINS_RIGHT ${directPinsC(direct.right)}`] : []),
+            ] : [
+                `#define MATRIX_ROW_PINS { ${activeRows.join(', ')} }`,
+                `#define MATRIX_COL_PINS { ${activeCols.join(', ')} }`,
+                ...(rightPins ? [
+                    ownRightPins
+                        ? `// Right half: its own pin order (mirror-image wiring; same count, NO_PIN = unused)`
+                        : `// Right half: same pins as the left half`,
+                    `#define MATRIX_ROW_PINS_RIGHT { ${(rightPins.rows || activeRows).join(', ')} }`,
+                    `#define MATRIX_COL_PINS_RIGHT { ${(rightPins.cols || activeCols).join(', ')} }`,
+                ] : []),
+                `#define DIODE_DIRECTION ${diodeDirection}`,
+            ];
+            const configH = [
+                `// SPDX-License-Identifier: GPL-2.0-or-later`,
+                `// Auto-generated by Cubify`,
+                `#pragma once`,
+                ``,
+                `#define MATRIX_ROWS ${logicalRows}`,
+                `#define MATRIX_COLS ${numCols}`,
+                ...pinLines,
+            ].join('\n') + splitLine;
+
+            // keyboard.h
+            const keyboardH = [
+                `// SPDX-License-Identifier: GPL-2.0-or-later`,
+                `#pragma once`,
+                ``,
+                `#include "quantum.h"`,
+            ].join('\n');
+
+            // info.json (QMK format)
+            const infoJSON = {
+                keyboard_name: kbName,
+                manufacturer: currentJSON.manufacturer || 'Custom Handwired',
+                url: '',
+                maintainer: 'handwired',
+                usb: { vid: '0xFEED', pid: '0x0000', device_version: '0.0.1' },
+                processor: mcuInfo.mcu,
+                bootloader: mcuInfo.boot,
+                ...(direct ? {} : { diode_direction: diodeDirection }), // unused for direct pins
+                ...(isSplit ? { split: {
+                    enabled: true,
+                    transport: { protocol: 'serial' }, // TRRS/TRS cable between the halves
+                    ...(linkPin ? { serial: { driver: mcuInfo.mcu === 'RP2040' ? 'vendor' : 'bitbang', pin: linkPin } } : {}),
+                    // QMK writes NO_PIN as null in JSON
+                    ...(direct ? { matrix_pins: { right: { direct: direct.right } } }
+                        : rightPins ? { matrix_pins: { right: { rows: rightPins.rows.map(p => p === 'NO_PIN' ? null : p),
+                                                                cols: rightPins.cols.map(p => p === 'NO_PIN' ? null : p) } } } : {}),
+                } } : {}),
+                matrix_pins: direct ? { direct: direct.left } : { rows: activeRows, cols: activeCols },
+                layouts: {
+                    [layoutName]: {
+                        layout: layout.map(k => {
+                            const e = {};
+                            if (k.matrix) e.matrix = k.matrix;
+                            e.x = parseFloat((k.x || 0).toFixed(2));
+                            e.y = parseFloat((k.y || 0).toFixed(2));
+                            if (k.w && k.w !== 1) e.w = parseFloat(k.w.toFixed(2));
+                            if (k.h && k.h !== 1) e.h = parseFloat(k.h.toFixed(2));
+                            return e;
+                        })
+                    }
+                }
+            };
+
+            return { layout, activeRows, activeCols, isSplit, direct, numRows, numCols, selectedProfile, linkPin,
+                ownRightPins, rightPins, logicalRows, unlock, diodeDirection, mcuInfo, kbName, layoutName,
+                splitLine, configH, keyboardH, infoJSON };
+        }
+
+        // A layout as KLE rows with each key labelled "row,col" (the Vial/VIA format), rebuilt from
+        // key positions: rows by y band, keys left to right. Rotation is not kept.
+        function flatLayoutKLE(keys) {
+            const ROW_TOL = 0.7;
+            let rowBands = [];
+            [...keys].sort((a,b) =>
+                (a.cy||(a.y||0)+(a.h||1)/2) - (b.cy||(b.y||0)+(b.h||1)/2)
+            ).forEach(k => {
+                const ky = k.cy || (k.y||0) + (k.h||1)/2;
+                let band = rowBands.find(b => Math.abs(b.avgY - ky) < ROW_TOL);
+                if (band) {
+                    band.keys.push(k);
+                    band.avgY = band.keys.reduce((s,x) => s+(x.cy||(x.y||0)+(x.h||1)/2),0)/band.keys.length;
+                } else {
+                    rowBands.push({ avgY: ky, keys: [k] });
+                }
+            });
+            rowBands.sort((a,b) => a.avgY - b.avgY);
+
+            return rowBands.map(band => {
+                const sorted = [...band.keys].sort((a,b) =>
+                    (a.cx||(a.x||0)+(a.w||1)/2) - (b.cx||(b.x||0)+(b.w||1)/2)
+                );
+                const kleRow = [];
+                let curX = 0;
+                sorted.forEach(k => {
+                    const kx  = parseFloat((k.x || 0).toFixed(4));
+                    const kw  = parseFloat((k.w || 1).toFixed(4));
+                    const gap = parseFloat((kx - curX).toFixed(4));
+                    const meta = {};
+                    if (gap > 0.02) meta.x = parseFloat(gap.toFixed(2));
+                    if (kw !== 1)   meta.w = kw;
+                    if (Object.keys(meta).length > 0) kleRow.push(meta);
+                    kleRow.push(k.matrix ? `${k.matrix[0]},${k.matrix[1]}` : '0,0');
+                    curX = kx + kw;
+                });
+                return kleRow;
+            });
+        }
+
+
+        // ---- QMK / VIA firmware ----
+        // Layer 0 from the KLE legends. KLE puts a key's shifted symbol top-left and its unshifted
+        // one bottom-left ("!\n1"), so a lone symbol over a second legend means that second legend.
+        const LEGEND_KEYCODES = {
+            "-": "KC_MINS", "=": "KC_EQL", "`": "KC_GRV", "[": "KC_LBRC", "]": "KC_RBRC", "\\": "KC_BSLS",
+            ";": "KC_SCLN", "'": "KC_QUOT", ",": "KC_COMM", ".": "KC_DOT", "/": "KC_SLSH",
+            "←": "KC_LEFT", "→": "KC_RGHT", "↑": "KC_UP", "↓": "KC_DOWN",
+            esc: "KC_ESC", escape: "KC_ESC", tab: "KC_TAB", caps: "KC_CAPS", capslock: "KC_CAPS", capslk: "KC_CAPS",
+            shift: "KC_LSFT", lshift: "KC_LSFT", rshift: "KC_RSFT", ctrl: "KC_LCTL", control: "KC_LCTL", lctrl: "KC_LCTL", rctrl: "KC_RCTL",
+            alt: "KC_LALT", opt: "KC_LALT", option: "KC_LALT", lalt: "KC_LALT", ralt: "KC_RALT", altgr: "KC_RALT",
+            win: "KC_LGUI", windows: "KC_LGUI", gui: "KC_LGUI", super: "KC_LGUI", cmd: "KC_LGUI", command: "KC_LGUI", meta: "KC_LGUI", os: "KC_LGUI",
+            enter: "KC_ENT", return: "KC_ENT", ent: "KC_ENT", backspace: "KC_BSPC", bksp: "KC_BSPC", bspc: "KC_BSPC", back: "KC_BSPC",
+            del: "KC_DEL", delete: "KC_DEL", ins: "KC_INS", insert: "KC_INS",
+            pgup: "KC_PGUP", pageup: "KC_PGUP", pgdn: "KC_PGDN", pgdw: "KC_PGDN", pgdown: "KC_PGDN", pagedown: "KC_PGDN",
+            home: "KC_HOME", end: "KC_END", up: "KC_UP", down: "KC_DOWN", left: "KC_LEFT", right: "KC_RGHT",
+            space: "KC_SPC", spc: "KC_SPC", spacebar: "KC_SPC", menu: "KC_APP", app: "KC_APP", apps: "KC_APP",
+            prtsc: "KC_PSCR", prtscr: "KC_PSCR", printscreen: "KC_PSCR", print: "KC_PSCR", scrlk: "KC_SCRL", scrolllock: "KC_SCRL",
+            pause: "KC_PAUS", break: "KC_PAUS", numlock: "KC_NUM", numlk: "KC_NUM", mute: "KC_MUTE",
+            fn: "MO(1)", fn1: "MO(1)", fn2: "MO(2)", fn3: "MO(3)",
+        };
+        // `rightSide`: a key right of the board's middle gets the right-hand modifier (KC_RSFT, …).
+        function legendToKeycode(key, rightSide) {
+            const L = (key.legends || [key.label || ""]).map(t => String(t || "").trim());
+            let t = L[0] || "";
+            if (L[1] && t.length === 1 && !/[a-z0-9]/i.test(t)) t = L[1];
+            if (!t) return (key.w || 1) >= 2 ? "KC_SPC" : null; // a blank wide key is the space bar
+            if (/^[a-z]$/i.test(t)) return "KC_" + t.toUpperCase();
+            if (/^[0-9]$/.test(t)) return "KC_" + t;
+            if (/^f([1-9]|1[0-9]|2[0-4])$/i.test(t)) return "KC_" + t.toUpperCase();
+            const kc = LEGEND_KEYCODES[t] || LEGEND_KEYCODES[t.toLowerCase().replace(/[\s_]+/g, "")];
+            if (!kc) return null;
+            return rightSide ? kc.replace(/^KC_L(CTL|SFT|ALT|GUI)$/, "KC_R$1") : kc;
+        }
+
+        // Keymap layers in LAYOUT order: a loaded keymap.c wins; otherwise layer 0 comes from the
+        // legends (unknown ones become KC_NO and are reported) and layers 1-3 are KC_TRNS, so VIA
+        // has its 4 layers and an Fn key (MO(1)) has a layer to go to.
+        function firmwareLayers(layout) {
+            if (parsedKeymaps && Object.keys(parsedKeymaps).length) {
+                const ids = Object.keys(parsedKeymaps).map(Number).sort((a, b) => a - b);
+                const layers = ids.map(id => layout.map((_, i) => parsedKeymaps[id][i] || "KC_TRNS"));
+                while (layers.length < 4) layers.push(layout.map(() => "KC_TRNS"));
+                return { layers, unknown: [], fromKeymap: true };
+            }
+            const cx = k => (k.x || 0) + (k.w || 1) / 2;
+            const xs = layout.map(cx), mid = (Math.min(...xs) + Math.max(...xs)) / 2;
+            const unknown = [];
+            const base = layout.map((k, i) => {
+                const kc = legendToKeycode(k, cx(k) > mid);
+                if (!kc) unknown.push({ index: i, matrix: k.matrix, legend: (k.legends || [k.label || ""]).filter(Boolean).join(" / ") || "(blank)" });
+                return kc || "KC_NO";
+            });
+            return { layers: [base, ...[1, 2, 3].map(() => layout.map(() => "KC_TRNS"))], unknown, fromKeymap: false };
+        }
+
+        function keymapSource(layoutName, layers) {
+            const rows = arr => arr.reduce((out, kc, i) => { (out[Math.floor(i / 12)] = out[Math.floor(i / 12)] || []).push(kc); return out; }, [])
+                .map(r => "        " + r.join(", ")).join(",\n");
+            return [
+                `// SPDX-License-Identifier: GPL-2.0-or-later`,
+                `// Auto-generated by Cubify. Keys are in LAYOUT order (the order of keyboard.json's layout).`,
+                ``,
+                `#include QMK_KEYBOARD_H`,
+                ``,
+                `const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {`,
+                ...layers.map((l, i) => `    [${i}] = ${layoutName}(\n${rows(l)}\n    ),`),
+                `};`,
+                ``,
+            ].join("\n");
+        }
+
+        // VIA's layout: the imported KLE itself (rotation and all) with every key relabelled "row,col";
+        // a QMK upload has no KLE, so its keys are laid out from their positions.
+        function viaLayoutKLE(layout) {
+            if (currentJSON._source === 'kle' && lastKleText) {
+                try {
+                    let i = 0;
+                    const rows = parseKleText(lastKleText).filter(Array.isArray).map(row => row.map(item => {
+                        if (typeof item !== 'string') return item;
+                        const k = layout[i++];
+                        return k && k.matrix ? `${k.matrix[0]},${k.matrix[1]}` : "0,0";
+                    }));
+                    if (i === layout.length) return rows;
+                } catch (e) { /* fall back below */ }
+            }
+            return flatLayoutKLE(layout);
+        }
+
+        // USB product ID from the keyboard's name: VIA tells boards apart by VID/PID, so two Cubify
+        // boards shouldn't share one. Never 0x0000.
+        function productIdFor(name) {
+            let h = 0;
+            for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+            return "0x" + ((h % 0xFFFE) + 1).toString(16).toUpperCase().padStart(4, "0");
+        }
+
+        // QMK (target "qmk") or VIA ("via") keyboard folder: data-driven keyboard.json with the pins and
+        // matrix exactly as on screen, keymaps, via.json (VIA only), build.sh and BUILD.md.
+        function buildQmkFirmware(target) {
+            const spec = firmwareSpec(target === 'via' ? 'a VIA firmware' : 'a QMK firmware');
+            if (!spec) return null;
+            const { layout, isSplit, direct, logicalRows, numCols, unlock, mcuInfo, kbName, layoutName, splitLine } = spec;
+            const via = target === 'via';
+            const pid = productIdFor(kbName);
+            const { layers, unknown, fromKeymap } = firmwareLayers(layout);
+            const keymapC = keymapSource(layoutName, layers);
+
+            const { url, ...info } = spec.infoJSON; // eslint-disable-line no-unused-vars
+            // QMK wants the layout to start at 0,0 (display positions only: matrix and pins untouched).
+            const keys = info.layouts[layoutName].layout;
+            const x0 = Math.min(...keys.map(k => k.x)), y0 = Math.min(...keys.map(k => k.y));
+            const shifted = keys.map(k => ({ ...k, x: +(k.x - x0).toFixed(2), y: +(k.y - y0).toFixed(2) }));
+            const keyboardJSON = {
+                ...info,
+                layouts: { [layoutName]: { layout: shifted } },
+                usb: { vid: "0xFEED", pid, device_version: "1.0.0" },
+                features: { bootmagic: true, extrakey: true, mousekey: true, nkro: true },
+                // hold this key while plugging in to jump to the bootloader
+                bootmagic: { matrix: unlock[0] },
+                ...(isSplit && info.split ? { split: { ...info.split, usb_detect: { enabled: true } } } : {}),
+            };
+            const configLines = [
+                ...(direct ? [``, `// Direct wiring: one GPIO per switch, other leg on GND, no diodes. The pins are in`,
+                    `// keyboard.json "matrix_pins": {"direct": ...}${isSplit ? ' and "split": {"matrix_pins": {"right": {"direct": ...}}}' : ''}.`] : []),
+                ...(splitLine ? splitLine.split("\n").filter(l => !/SPLIT_USB_DETECT/.test(l)) : []),
+            ];
+            const configH = configLines.length ? [`// SPDX-License-Identifier: GPL-2.0-or-later`, `// Auto-generated by Cubify`, `#pragma once`, ...configLines, ``].join("\n") : null;
+            const viaJSON = {
+                name: currentJSON.keyboard_name || kbName,
+                vendorId: "0xFEED",
+                productId: pid,
+                matrix: { rows: logicalRows, cols: numCols },
+                layouts: { keymap: viaLayoutKLE(layout) },
+            };
+            const km = via ? "via" : "default";
+            const qmkKb = `handwired/${kbName}`;
+            const buildSh = [
+                `#!/usr/bin/env bash`,
+                `# Auto-generated by Cubify: copies this keyboard into your QMK tree and compiles it.`,
+                `# Usage: ./build.sh            (QMK_HOME defaults to ~/qmk_firmware)`,
+                `#        QMK_HOME=/path/to/qmk_firmware ./build.sh`,
+                `set -euo pipefail`,
+                `HERE="$(cd "$(dirname "$0")" && pwd)"`,
+                `QMK_HOME="\${QMK_HOME:-$HOME/qmk_firmware}"`,
+                `DEST="$QMK_HOME/keyboards/${qmkKb}"`,
+                `mkdir -p "$DEST"`,
+                `cp "$HERE/keyboard.json" "$DEST/"`,
+                ...(configH ? [`cp "$HERE/config.h" "$DEST/"`] : []),
+                `cp -r "$HERE/keymaps" "$DEST/"`,
+                `cd "$QMK_HOME"`,
+                `qmk compile -kb ${qmkKb} -km ${km}`,
+                `echo "Firmware: $QMK_HOME/${qmkKb.replace('/', '_')}_${km}.${mcuInfo.mcu === 'RP2040' ? 'uf2' : 'hex'}"`,
+                ``,
+            ].join("\n");
+            const flashStep = mcuInfo.mcu === 'RP2040'
+                ? `Hold BOOT while plugging in the RP2040 (or double-tap RESET): it mounts as a drive (RPI-RP2). Copy the .uf2 onto it.${isSplit ? ' Do this for both halves.' : ''}`
+                : `Flash the .hex with QMK Toolbox, or \`qmk flash -kb ${qmkKb} -km ${km}\` and reset the Pro Micro when asked.${isSplit ? ' Do this for both halves.' : ''}`;
+            const buildMd = [
+                `# ${viaJSON.name}: ${via ? 'VIA' : 'QMK'} firmware`,
+                `> Auto-generated by Cubify from the layout and wiring shown on screen (nothing re-routed).`,
+                ``,
+                `- Controller: ${mcuInfo.mcu} (${mcuInfo.boot})${isSplit ? ', split: one controller per half, same firmware on both' : ''}`,
+                direct ? `- Direct wiring: one pin per key, other leg on GND, no diodes` : `- Matrix: ${logicalRows} × ${numCols}, diodes ${keyboardJSON.diode_direction}`,
+                `- USB: VID 0xFEED, PID ${pid}`,
+                `- Bootloader key (Bootmagic): hold [${unlock[0]}] while plugging in`,
+                ``,
+                `## Build`,
+                `Needs a QMK build environment (\`qmk setup\`, then \`qmk doctor\` all green).`,
+                '```bash',
+                `./build.sh`,
+                '```',
+                `This copies the folder to \`keyboards/${qmkKb}\` in your QMK tree and runs \`qmk compile -kb ${qmkKb} -km ${km}\`.`,
+                ``,
+                `## Flash`,
+                flashStep,
+                ``,
+                ...(via ? [
+                    `## VIA`,
+                    `VIA only knows boards from its own list, so load \`via.json\` yourself: open https://usevia.app,`,
+                    `Settings → enable "Show Design tab", then Design → Load and pick \`via.json\`. Your keyboard then`,
+                    `shows up in Configure, where you can remap every key and its 4 layers live.`,
+                    ``,
+                ] : []),
+                `## Keymap`,
+                fromKeymap ? `Layers come from the keymap.c you loaded in Cubify.`
+                    : `Layer 0 comes from the KLE legends; layers 1-3 are transparent${via ? ' (fill them in VIA)' : ''}.`,
+                ...(unknown.length ? [``, `These legends had no obvious keycode, so they are KC_NO for now:`,
+                    ...unknown.map(u => `- key ${u.index + 1} [${u.matrix}]: ${u.legend}`)] : []),
+                ``,
+            ].join("\n");
+
+            const files = {
+                "keyboard.json": JSON.stringify(keyboardJSON, null, 2),
+                ...(configH ? { "config.h": configH } : {}),
+                "keymaps/default/keymap.c": keymapC,
+                ...(via ? {
+                    "keymaps/via/keymap.c": keymapC,
+                    "keymaps/via/rules.mk": [`VIA_ENABLE = yes`, ...(mcuInfo.mcu === 'atmega32u4' ? [`LTO_ENABLE = yes  # VIA needs the room on a Pro Micro`] : []), ``].join("\n"),
+                    "via.json": JSON.stringify(viaJSON, null, 2),
+                } : {}),
+                "build.sh": buildSh,
+                "BUILD.md": buildMd,
+            };
+            return { kbName, target, km, qmkKb, files, unknown, mcu: mcuInfo.mcu };
+        }
+
+        // ============================================================
         // VIAL FIRMWARE ZIP EXPORT
         // Per official docs: https://get.vial.today/docs/porting-to-vial.html
         // ============================================================
         if (exportVialZipBtn) {
             exportVialZipBtn.addEventListener('click', () => {
-                if (!currentJSON) { alert('No layout loaded. Import a KLE first.'); return; }
-                if (typeof JSZip === 'undefined') { alert('JSZip not loaded. Check internet connection.'); return; }
-
-                const layout      = extractLayout(currentJSON);
-                const matrixPins  = currentJSON.matrix_pins || { rows: [], cols: [] };
-                const activeRows  = matrixPins.rows || [];
-                const activeCols  = matrixPins.cols || [];
-                const isSplit     = !!(currentJSON.split && (currentJSON.split.enabled ?? true));
-                // Direct wiring: the grid's shape is the matrix size (rows x cols per half).
-                const direct      = directGridsOf();
-                const numRows     = direct ? gridDims(direct.left).rows : activeRows.length;
-                const numCols     = direct ? gridDims(direct.left).cols : activeCols.length;
-                const selectedProfile = parseBoardChoice(boardSelect.value).id;
-                if (isZmkOnly(selectedProfile)) {
-                    alert('nice!nano / nRF52840 boards run ZMK, not QMK or Vial, so a Vial ZIP would never build. Pick an RP2040 or Pro Micro board, or set the board up in a ZMK config instead.');
-                    return;
-                }
-                const linkPin = currentJSON.split_link && currentJSON.split_link.pin;
-                // Splits declare each side's pins explicitly, even when both use the same list.
-                // (Direct wiring has no row/column lists: its right grid goes in split.matrix_pins.right.direct.)
-                const ownRightPins = isSplit && !direct ? rightHalfPins() : null;
-                const rightPins = isSplit && !direct ? (ownRightPins || { rows: activeRows, cols: activeCols }) : null;
-
-                // Logical matrix size. Split: QMK scans left rows then right rows, so
-                // MATRIX_ROWS = 2 x row pins per half (matrix_pins.rows lists one half).
-                const logicalRows = isSplit ? numRows * 2 : numRows;
-                const unlock = pickUnlockKeys(layout);
-                // Amoeba Royale's on-board diode has its anode on the row pad → ROW2COL.
-                const diodeDirection = (amoebaToggle && amoebaToggle.checked) ? 'ROW2COL' : 'COL2ROW';
-
-                // MCU detection from board profile
-                const mcuMap = {
-                    rp2040_zero:             { mcu: 'RP2040',     boot: 'rp2040'      },
-                    rp2040_tiny:             { mcu: 'RP2040',     boot: 'rp2040'      },
-                    waveshare_2040_plus:     { mcu: 'RP2040',     boot: 'rp2040'      },
-                    pro_micro:               { mcu: 'atmega32u4', boot: 'caterina'    },
-                    nice_nano:               { mcu: 'nRF52840',   boot: 'nrfmicro_13' },
-                    nrf52840_nicenano_clone: { mcu: 'nRF52840',   boot: 'nrfmicro_13' },
-                };
-                const mcuInfo = mcuMap[selectedProfile] || { mcu: 'RP2040', boot: 'rp2040' };
-
+                const spec = firmwareSpec('a Vial ZIP');
+                if (!spec) return;
+                const { layout, activeRows, activeCols, isSplit, logicalRows, numCols, unlock, mcuInfo, kbName, layoutName,
+                        configH, keyboardH, infoJSON } = spec;
                 // 8-byte random Vial UID
                 const uid = Array.from({length: 8}, () =>
                     '0x' + Math.floor(Math.random() * 256).toString(16).toUpperCase().padStart(2, '0')
                 ).join(', ');
-
-                // Keyboard folder name
-                const kbName = (currentJSON.keyboard_name || 'custom_handwired')
-                    .toLowerCase().replace(/[^a-z0-9]/g, '_');
-                const layoutName = currentJSON.layouts
-                    ? (Object.keys(currentJSON.layouts)[0] || 'LAYOUT')
-                    : 'LAYOUT';
 
                 // 4-layer KC_TRNS keymap
                 const keymapArgs = layout.map(() => 'KC_TRNS').join(', ');
@@ -2187,67 +2580,6 @@ const UNIT_SIZE = 55; // 1U = 55px
                     `    [2] = ${layoutName}(${keymapArgs}),`,
                     `    [3] = ${layoutName}(${keymapArgs}),`,
                     `};`,
-                ].join('\n');
-
-                // Keyboard-level config.h
-                const splitLine = isSplit && linkPin ? [
-                    ``,
-                    `// Split keyboard: two controllers, one firmware (flash the same file to both halves).`,
-                    `// Link: half-duplex serial over the TRRS cable on ${linkPin} of each half (split.serial in`,
-                    `// info.json). Wire tip/ring/sleeve the same on both halves; never hot-plug the cable.`,
-                    `#define SPLIT_USB_DETECT`,
-                    `// Handedness: the half with USB plugged in is the left (master) half.`,
-                    `// To plug USB into either half, use EE_HANDS instead and flash each half once with`,
-                    `// :uf2-split-left / :uf2-split-right (RP2040) or :dfu-split-left/right / :avrdude-split-left/right.`,
-                    `#define MASTER_LEFT`,
-                ].join('\n') : isSplit ? [
-                    ``,
-                    `// Split keyboard — REQUIRED: configure your serial/TRRS communication pin`,
-                    `// Uncomment and set the correct TX pin for your wiring:`,
-                    `// #define SERIAL_USART_FULL_DUPLEX         // use for UART (full duplex)`,
-                    `// #define SERIAL_USART_TX_PIN GP0          // TX pin on left half`,
-                    `// #define SERIAL_USART_RX_PIN GP1          // RX pin on right half`,
-                    `// Or for simple single-wire (half-duplex):`,
-                    `// #define SOFT_SERIAL_PIN D2               // for Pro Micro`,
-                    `#define SPLIT_USB_DETECT`,
-                ].join('\n') : '';
-                // QMK's own DIRECT_PINS form of a grid (null = NO_PIN), quoted in the config.h comment.
-                const directPinsC = grid => `{ ${grid.map(r => `{ ${r.map(p => p || 'NO_PIN').join(', ')} }`).join(', ')} }`;
-                const pinLines = direct ? [
-                    `// Direct wiring: every switch has its own GPIO and its other leg on a shared GND.`,
-                    `// No diodes and no row/column matrix (so no DIODE_DIRECTION). QMK reads the pins from`,
-                    `// info.json "matrix_pins": {"direct": [...]}${isSplit ? ' and "split": {"matrix_pins": {"right": {"direct": [...]}}}' : ''},`,
-                    `// the same as:`,
-                    `//   #define DIRECT_PINS ${directPinsC(direct.left)}`,
-                    ...(isSplit ? [`//   #define DIRECT_PINS_RIGHT ${directPinsC(direct.right)}`] : []),
-                ] : [
-                    `#define MATRIX_ROW_PINS { ${activeRows.join(', ')} }`,
-                    `#define MATRIX_COL_PINS { ${activeCols.join(', ')} }`,
-                    ...(rightPins ? [
-                        ownRightPins
-                            ? `// Right half: its own pin order (mirror-image wiring; same count, NO_PIN = unused)`
-                            : `// Right half: same pins as the left half`,
-                        `#define MATRIX_ROW_PINS_RIGHT { ${(rightPins.rows || activeRows).join(', ')} }`,
-                        `#define MATRIX_COL_PINS_RIGHT { ${(rightPins.cols || activeCols).join(', ')} }`,
-                    ] : []),
-                    `#define DIODE_DIRECTION ${diodeDirection}`,
-                ];
-                const configH = [
-                    `// SPDX-License-Identifier: GPL-2.0-or-later`,
-                    `// Auto-generated by Cubify`,
-                    `#pragma once`,
-                    ``,
-                    `#define MATRIX_ROWS ${logicalRows}`,
-                    `#define MATRIX_COLS ${numCols}`,
-                    ...pinLines,
-                ].join('\n') + splitLine;
-
-                // keyboard.h
-                const keyboardH = [
-                    `// SPDX-License-Identifier: GPL-2.0-or-later`,
-                    `#pragma once`,
-                    ``,
-                    `#include "quantum.h"`,
                 ].join('\n');
 
                 // Keyboard-level rules.mk — MCU only, NO VIA/VIAL
@@ -2280,79 +2612,8 @@ const UNIT_SIZE = 55; // 1U = 55px
                     `#define VIAL_UNLOCK_COMBO_COLS { ${unlock[0][1]}, ${unlock[1][1]} }`,
                 ].join('\n');
 
-                // info.json (QMK format)
-                const infoJSON = {
-                    keyboard_name: kbName,
-                    manufacturer: currentJSON.manufacturer || 'Custom Handwired',
-                    url: '',
-                    maintainer: 'handwired',
-                    usb: { vid: '0xFEED', pid: '0x0000', device_version: '0.0.1' },
-                    processor: mcuInfo.mcu,
-                    bootloader: mcuInfo.boot,
-                    ...(direct ? {} : { diode_direction: diodeDirection }), // unused for direct pins
-                    ...(isSplit ? { split: {
-                        enabled: true,
-                        transport: { protocol: 'serial' }, // TRRS/TRS cable between the halves
-                        ...(linkPin ? { serial: { driver: mcuInfo.mcu === 'RP2040' ? 'vendor' : 'bitbang', pin: linkPin } } : {}),
-                        // QMK writes NO_PIN as null in JSON
-                        ...(direct ? { matrix_pins: { right: { direct: direct.right } } }
-                            : rightPins ? { matrix_pins: { right: { rows: rightPins.rows.map(p => p === 'NO_PIN' ? null : p),
-                                                                    cols: rightPins.cols.map(p => p === 'NO_PIN' ? null : p) } } } : {}),
-                    } } : {}),
-                    matrix_pins: direct ? { direct: direct.left } : { rows: activeRows, cols: activeCols },
-                    layouts: {
-                        [layoutName]: {
-                            layout: layout.map(k => {
-                                const e = {};
-                                if (k.matrix) e.matrix = k.matrix;
-                                e.x = parseFloat((k.x || 0).toFixed(2));
-                                e.y = parseFloat((k.y || 0).toFixed(2));
-                                if (k.w && k.w !== 1) e.w = parseFloat(k.w.toFixed(2));
-                                if (k.h && k.h !== 1) e.h = parseFloat(k.h.toFixed(2));
-                                return e;
-                            })
-                        }
-                    }
-                };
-
                 // vial.json — KLE format where each key label = "row,col"
-                function buildVialKLE(keys) {
-                    const ROW_TOL = 0.7;
-                    let rowBands = [];
-                    [...keys].sort((a,b) =>
-                        (a.cy||(a.y||0)+(a.h||1)/2) - (b.cy||(b.y||0)+(b.h||1)/2)
-                    ).forEach(k => {
-                        const ky = k.cy || (k.y||0) + (k.h||1)/2;
-                        let band = rowBands.find(b => Math.abs(b.avgY - ky) < ROW_TOL);
-                        if (band) {
-                            band.keys.push(k);
-                            band.avgY = band.keys.reduce((s,x) => s+(x.cy||(x.y||0)+(x.h||1)/2),0)/band.keys.length;
-                        } else {
-                            rowBands.push({ avgY: ky, keys: [k] });
-                        }
-                    });
-                    rowBands.sort((a,b) => a.avgY - b.avgY);
-
-                    return rowBands.map(band => {
-                        const sorted = [...band.keys].sort((a,b) =>
-                            (a.cx||(a.x||0)+(a.w||1)/2) - (b.cx||(b.x||0)+(b.w||1)/2)
-                        );
-                        const kleRow = [];
-                        let curX = 0;
-                        sorted.forEach(k => {
-                            const kx  = parseFloat((k.x || 0).toFixed(4));
-                            const kw  = parseFloat((k.w || 1).toFixed(4));
-                            const gap = parseFloat((kx - curX).toFixed(4));
-                            const meta = {};
-                            if (gap > 0.02) meta.x = parseFloat(gap.toFixed(2));
-                            if (kw !== 1)   meta.w = kw;
-                            if (Object.keys(meta).length > 0) kleRow.push(meta);
-                            kleRow.push(k.matrix ? `${k.matrix[0]},${k.matrix[1]}` : '0,0');
-                            curX = kx + kw;
-                        });
-                        return kleRow;
-                    });
-                }
+                const buildVialKLE = flatLayoutKLE;
 
                 const vialJSON = {
                     name: kbName,
@@ -2464,3 +2725,44 @@ const UNIT_SIZE = 55; // 1U = 55px
             }
         }
 
+        // "Export firmware": QMK or VIA keyboard folder as a ZIP, then the build/flash steps.
+        const exportFirmwareBtn = document.getElementById('exportFirmwareBtn');
+        const firmwareTarget = document.getElementById('firmwareTarget');
+        if (exportFirmwareBtn) {
+            exportFirmwareBtn.addEventListener('click', () => {
+                const fw = buildQmkFirmware(firmwareTarget && firmwareTarget.value === 'qmk' ? 'qmk' : 'via');
+                if (!fw) return;
+                const zip = new JSZip();
+                const kb = zip.folder(fw.kbName);
+                Object.entries(fw.files).forEach(([name, text]) =>
+                    kb.file(name, text, name.endsWith('.sh') ? { unixPermissions: '755' } : undefined));
+                zip.generateAsync({ type: 'blob', platform: 'UNIX' }).then(blob => {
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${fw.kbName}_${fw.target}.zip`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    URL.revokeObjectURL(url);
+                    showFirmwareModal(fw);
+                });
+            });
+        }
+        function showFirmwareModal(fw) {
+            const modal = document.getElementById('firmwareModal');
+            const body = document.getElementById('firmwareModalBody');
+            if (!modal || !body) return;
+            const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+            const ext = fw.mcu === 'RP2040' ? 'uf2' : 'hex';
+            body.innerHTML = [
+                `<p>Unzip it, then in the <code>${esc(fw.kbName)}</code> folder:</p>`,
+                `<pre><code>./build.sh</code></pre>`,
+                `<p>It copies the keyboard to <code>keyboards/${esc(fw.qmkKb)}</code> in <code>~/qmk_firmware</code> (or <code>$QMK_HOME</code>) and runs <code>qmk compile -kb ${esc(fw.qmkKb)} -km ${fw.km}</code>, which writes <code>${esc(fw.qmkKb.replace('/', '_'))}_${fw.km}.${ext}</code>.</p>`,
+                fw.target === 'via' ? `<p><b>VIA:</b> in <a href="https://usevia.app" target="_blank" style="color:var(--blue,#89b4fa)">usevia.app</a>, Settings → "Show Design tab", then Design → Load <code>via.json</code> from the ZIP.</p>` : '',
+                fw.unknown.length ? `<p>⚠️ ${fw.unknown.length} key${fw.unknown.length > 1 ? 's have legends' : ' has a legend'} with no obvious keycode (${esc(fw.unknown.map(u => u.legend).join(', '))}): set to KC_NO${fw.target === 'via' ? ' — change them in VIA' : ''}. BUILD.md lists them.</p>` : '',
+            ].join('');
+            modal.style.display = 'flex';
+        }
+        const closeFirmwareBtn = document.getElementById('closeFirmwareBtn');
+        if (closeFirmwareBtn) closeFirmwareBtn.addEventListener('click', () => { document.getElementById('firmwareModal').style.display = 'none'; });

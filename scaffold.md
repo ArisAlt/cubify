@@ -37,7 +37,8 @@ A single HTML file containing:
   - Renders interactive SVGs to visualize matrix wiring paths using ribbon cable color coding.
   - Handles the mirroring logic for the bottom (soldering) view and layer switching for top view.
   - Wiring choice (`#wiringSelect` / `#kleWiringSelect`): diode matrix, or direct wiring for macropads (`buildDirectGrids` → `matrix_pins.direct`, one pin per key, shared GND; drawn by `drawControllers(..., direct)`).
-- **Tests** (`tests/`, `npm test`): `harness.js` runs the real `cubify.js` in a fake DOM; `wiring`, `split`, `boards`, `amoeba` and `direct` test files.
+  - Firmware export: `firmwareSpec()` (shared pins/matrix/split/info.json, never re-routes) feeds the Vial ZIP and `buildQmkFirmware('via'|'qmk')` (keyboard.json, keymaps from `legendToKeycode`/`firmwareLayers`, `via.json` from `viaLayoutKLE`, build.sh, BUILD.md).
+- **Tests** (`tests/`, `npm test`): `harness.js` runs the real `cubify.js` in a fake DOM; `wiring`, `split`, `boards`, `amoeba`, `direct` and `firmware` test files.
 
 ### 2. Layout Configurations (`*.json`)
 These files define the physical key layout and the matrix structure, extracted from tools like QMK Configurator or a keyboard's source code. They are consumed by the visualizer to render the keyboard.
