@@ -441,6 +441,7 @@ const UNIT_SIZE = 55; // 1U = 55px
             importKleBtn.addEventListener('click', () => {
                 updateKleWiringOffer();
                 kleModal.style.display = 'flex';
+                if (kleInput.focus) kleInput.focus();
             });
         }
         
@@ -595,8 +596,8 @@ const UNIT_SIZE = 55; // 1U = 55px
                     let manualKeys = physicalLayout.filter(k => k.matrixOverride !== null);
                     let isManualRouting = manualKeys.length === physicalLayout.length;
 
-                    numLogicalRows = 0;
-                    numLogicalCols = 0;
+                    let numLogicalRows = 0;
+                    let numLogicalCols = 0;
                     let perHalfRows = 0; // Only meaningful for split keyboards (rows per MCU)
 
                     const kleChoice = parseBoardChoice(kleBoardSelect.value);
@@ -2695,6 +2696,8 @@ const UNIT_SIZE = 55; // 1U = 55px
             if (title) title.textContent = `⚙️ ${firmwareGuide(fw).title}: build & flash`;
             body.innerHTML = guideHTML(fw);
             modal.style.display = 'flex';
+            const close = document.getElementById('closeFirmwareBtn');
+            if (close && close.focus) close.focus();
         }
         // ③ Show wiring: tick "Show Wiring" and draw it.
         const fwShowWiringBtn = document.getElementById('fwShowWiringBtn');
@@ -2705,5 +2708,13 @@ const UNIT_SIZE = 55; // 1U = 55px
         });
         if (firmwareTarget) firmwareTarget.addEventListener('change', () => { firmwareExported = false; updateFirmwareSteps(); });
         updateFirmwareSteps();
+        // Dialogs: Escape closes whichever is open (KLE import, firmware guide).
+        document.addEventListener('keydown', e => {
+            if (e.key !== 'Escape') return;
+            ['kleModal', 'firmwareModal'].forEach(id => {
+                const m = document.getElementById(id);
+                if (m && m.style.display === 'flex') m.style.display = 'none';
+            });
+        });
         const closeFirmwareBtn = document.getElementById('closeFirmwareBtn');
         if (closeFirmwareBtn) closeFirmwareBtn.addEventListener('click', () => { document.getElementById('firmwareModal').style.display = 'none'; });

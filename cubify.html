@@ -14,6 +14,25 @@
             --text-sub: #a6adc8;
             --accent: #f38ba8;
             --bottom-view: #fab387;
+            /* Palette (Catppuccin Mocha). Wire/pin colours in the drawing stay in cubify.js. */
+            --crust: #11111b;
+            --surface: #45475a;
+            --green: #a6e3a1;
+            --blue: #89b4fa;
+            --peach: #fab387;
+            --red: #f38ba8;
+            --yellow: #f9e2af;
+            --mauve: #cba6f7;
+            /* Type scale */
+            --fs-xs: 11px;
+            --fs-sm: 12px;
+            --fs-md: 13px;
+            --fs-base: 14px;
+            --fs-lg: 18px;
+            /* Radii */
+            --radius-sm: 6px;
+            --radius-md: 8px;
+            --radius-lg: 12px;
         }
         body {
             font-family: system-ui, -apple-system, sans-serif;
@@ -53,6 +72,11 @@
         }
         button:hover {
             filter: brightness(1.2);
+        }
+        /* Keyboard focus: visible ring on every control */
+        button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visible {
+            outline: 2px solid var(--blue);
+            outline-offset: 2px;
         }
         #viewToggle {
             margin-left: auto; /* Pushes button to the right */
@@ -145,13 +169,13 @@
             background: #45475a !important;
             border: 3px dashed var(--accent) !important;
         }
-        .fw-steps { gap: 10px; font-size: 13px; color: var(--text-sub); }
-        .fw-step { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--key-bg); }
-        .fw-step.done { border-color: #a6e3a1; color: var(--text-main); }
-        .fw-step.done::after { content: "✓"; color: #a6e3a1; font-weight: bold; }
-        .fw-hint { font-size: 11px; opacity: 0.75; }
+        .fw-steps { gap: 10px; font-size: var(--fs-md); color: var(--text-sub); }
+        .fw-step { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: var(--radius-sm); border: 1px solid var(--key-bg); }
+        .fw-step.done { border-color: var(--green); color: var(--text-main); }
+        .fw-step.done::after { content: "✓"; color: var(--green); font-weight: bold; }
+        .fw-hint { font-size: var(--fs-xs); opacity: 0.75; }
         .fw-arrow { opacity: 0.5; }
-        #exportFirmwareBtn { background: var(--blue, #89b4fa); color: #11111b; }
+        #exportFirmwareBtn { background: var(--blue); color: var(--crust); }
         button:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
         .assigning-mode .key {
             cursor: crosshair !important;
@@ -183,7 +207,7 @@
                 <label style="font-size:12px; color:var(--text-sub);">Local JSON (Optional):</label>
                 <div style="display:flex; gap: 5px;">
                     <input type="file" id="upload" accept=".json" style="max-width: 150px;" title="Upload QMK info.json">
-                    <button id="importKleBtn" style="padding: 0.5rem; background: var(--peach, #fab387); color: #11111b;" title="Import raw KLE Layout">Import KLE</button>
+                    <button id="importKleBtn" style="padding: 0.5rem; background: var(--peach); color: #11111b;" title="Import raw KLE Layout">Import KLE</button>
                 </div>
             </div>
 
@@ -215,17 +239,17 @@
             </label>
 
             <button id="viewToggle">👀 View: Top (Keycaps)</button>
-            <button id="clearAllBtn" style="margin-left: 10px; background: var(--red, #f38ba8); color: #11111b; font-weight: bold;">🗑️ Clear All</button>
+            <button id="clearAllBtn" style="margin-left: 10px; background: var(--red); color: #11111b; font-weight: bold;">🗑️ Clear All</button>
 
         </div>
 
         <!-- Firmware in four steps: each step turns green with a ✓ once done (cubify.js updateFirmwareSteps) -->
-        <div id="firmwareSteps" class="controls fw-steps">
+        <div id="firmwareSteps" class="controls fw-steps" role="group" aria-label="Firmware steps">
             <b style="color: var(--text-main);">⚙️ Firmware:</b>
             <span class="fw-step" id="fwStep1">① Load the layout JSON <span class="fw-hint">(Local JSON or Import KLE, e.g. from editor.keyboard-tools.xyz)</span></span>
             <span class="fw-arrow">→</span>
             <span class="fw-step" id="fwStep2">② Build for
-                <select id="firmwareTarget" title="VIA: remap keys live in usevia.app. QMK: plain firmware, keymap fixed at build time. Vial: like VIA, plus macros/combos in the Vial app (builds with vial-qmk).">
+                <select id="firmwareTarget" aria-label="Firmware to build" title="VIA: remap keys live in usevia.app. QMK: plain firmware, keymap fixed at build time. Vial: like VIA, plus macros/combos in the Vial app (builds with vial-qmk).">
                     <option value="via" selected>VIA</option>
                     <option value="qmk">QMK</option>
                     <option value="vial">Vial</option>
@@ -238,7 +262,7 @@
         </div>
     </div>
 
-    <div id="splitNotice" style="display:none; margin-top: 12px; padding: 12px 15px; border-radius: 8px; background: rgba(249, 226, 175, 0.08); border: 1px solid var(--yellow, #f9e2af); color: var(--text-main); font-size: 13px; line-height: 1.6;"></div>
+    <div id="splitNotice" style="display:none; margin-top: 12px; padding: 12px 15px; border-radius: 8px; background: rgba(249, 226, 175, 0.08); border: 1px solid var(--yellow); color: var(--text-main); font-size: 13px; line-height: 1.6;"></div>
     <div id="warningBanner" style="display:none; background: rgba(243, 139, 168, 0.2); border: 2px solid var(--accent); color: var(--accent); padding: 15px; border-radius: 8px; margin-top: 15px; font-weight: bold; text-align: center;"></div>
 
     <div id="amoebaLayerBar" style="display:none; margin-top: 12px; gap: 16px; align-items: center; flex-wrap: wrap; color: var(--text-sub); font-size: 13px; font-weight: bold;">
@@ -256,20 +280,20 @@
     <div id="tooltip"></div>
 
     <!-- Firmware guide: numbered build + flash steps for VIA / QMK / Vial (filled by cubify.js guideHTML) -->
-    <div id="firmwareModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:200; align-items:center; justify-content:center;">
-        <div style="background:var(--panel-bg); border:1px solid var(--blue, #89b4fa); border-radius:12px; padding:28px; width:680px; max-width:92%; max-height:90vh; overflow-y:auto; font-size:14px; line-height:1.5; box-shadow:0 8px 40px rgba(0,0,0,0.6);">
-            <h3 id="firmwareModalTitle" style="margin-top:0; color:var(--blue, #89b4fa); font-size:18px;">⚙️ Firmware downloaded: build &amp; flash</h3>
+    <div id="firmwareModal" role="dialog" aria-modal="true" aria-labelledby="firmwareModalTitle" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:200; align-items:center; justify-content:center;">
+        <div style="background:var(--panel-bg); border:1px solid var(--blue); border-radius:12px; padding:28px; width:680px; max-width:92%; max-height:90vh; overflow-y:auto; font-size:14px; line-height:1.5; box-shadow:0 8px 40px rgba(0,0,0,0.6);">
+            <h3 id="firmwareModalTitle" style="margin-top:0; color:var(--blue); font-size:18px;">⚙️ Firmware downloaded: build &amp; flash</h3>
             <div id="firmwareModalBody"></div>
             <div style="display:flex; justify-content:flex-end; margin-top:16px;">
-                <button id="closeFirmwareBtn" style="background:var(--blue,#89b4fa); color:#11111b; font-weight:bold; padding:8px 20px;">Got it ✓</button>
+                <button id="closeFirmwareBtn" style="background:var(--blue); color:#11111b; font-weight:bold; padding:8px 20px;">Got it ✓</button>
             </div>
         </div>
     </div>
 
-    <div id="kleModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:100; align-items:center; justify-content:center;">
-        <div style="background:var(--bg); border:1px solid var(--peach, #fab387); border-radius:8px; padding:20px; width:600px; max-width:90%;">
-            <h3 style="margin-top:0; color:var(--peach, #fab387);">Import KLE Layout</h3>
-            <p style="font-size:12px; color:var(--text-sub);">Paste your raw JSON from <a href="https://editor.keyboard-tools.xyz/" target="_blank" style="color:var(--blue, #89b4fa);">editor.keyboard-tools.xyz</a> below. The visualizer will auto-route the matrix based on physical positions.</p>
+    <div id="kleModal" role="dialog" aria-modal="true" aria-labelledby="kleModalTitle" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:100; align-items:center; justify-content:center;">
+        <div style="background:var(--panel-bg); border:1px solid var(--peach); border-radius:var(--radius-lg); padding:20px; width:600px; max-width:90%; box-shadow:0 8px 40px rgba(0,0,0,0.6);">
+            <h3 id="kleModalTitle" style="margin-top:0; color:var(--peach);">Import KLE Layout</h3>
+            <p style="font-size:12px; color:var(--text-sub);">Paste your raw JSON from <a href="https://editor.keyboard-tools.xyz/" target="_blank" style="color:var(--blue);">editor.keyboard-tools.xyz</a> below. The visualizer will auto-route the matrix based on physical positions.</p>
             
             <div style="margin-bottom: 15px; display:flex; flex-direction:column; gap:5px;">
                 <label style="font-size:12px; color:var(--text-sub);">Keyboard &amp; controller:</label>
@@ -284,12 +308,12 @@
             <textarea id="kleInput" placeholder='[["Esc","Q","W","E"...]]' style="width:100%; height:200px; background:#11111b; color:var(--text-main); border:1px solid var(--key-bg); padding:10px; font-family:monospace; margin-bottom:10px; resize:none; box-sizing: border-box;"></textarea>
             
             <div style="display:flex; justify-content:flex-end; gap:10px;">
-                <button id="processKleBtn" style="background:var(--peach, #fab387); color:#11111b;">🚀 Auto-Route Matrix</button>
+                <button id="processKleBtn" style="background:var(--peach); color:#11111b;">🚀 Auto-Route Matrix</button>
                 <button id="closeKleModalBtn" style="background:var(--key-bg); color:var(--text-main);">Cancel</button>
             </div>
         </div>
     </div>
 
-    <script src="cubify.js?v=31"></script>
+    <script src="cubify.js?v=32"></script>
 </body>
 </html>

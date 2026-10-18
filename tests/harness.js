@@ -34,7 +34,9 @@ function load({ split = false, board = "auto", wiring = null } = {}) {
         getElementById: byId,
         createElement: t => new El(t),
         createElementNS: (_, t) => new El(t),
-        addEventListener() {},
+        listeners: {},
+        addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); },
+        dispatch(t, ev) { (this.listeners[t] || []).forEach(f => f(ev)); },
         body: new El("body"),
     };
     const alerts = [];
@@ -52,13 +54,13 @@ function load({ split = false, board = "auto", wiring = null } = {}) {
     byId("amoebaZoom").value = "2";
 
     const factory = new Function("document", "window", "alert", "JSZip", "URL", "FileReader",
-        SRC + "\n;return { get currentJSON(){ return currentJSON; }, renderKeyboard, boardProfiles, BOARD_META, ledSupply," +
+        "\"use strict\";\n" + SRC + "\n;return { get currentJSON(){ return currentJSON; }, renderKeyboard, boardProfiles, BOARD_META, ledSupply," +
         " get isBottomView(){ return isBottomView; } };");
     const app = factory(document, {}, m => alerts.push(String(m)), JSZip, URL, FileReader);
     // cubify.js builds both board dropdowns at load; pick like a user would.
     byId("kleBoardSelect").value = (split ? "split:" : "") + board;
     if (wiring) byId("kleWiringSelect").value = wiring; // "matrix" | "direct"
-    return { app, els, byId, alerts, zipFiles };
+    return { app, els, byId, alerts, zipFiles, document };
 }
 
 /** Import a KLE array through the real "Import KLE" modal. */
