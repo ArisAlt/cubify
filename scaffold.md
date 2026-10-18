@@ -37,8 +37,10 @@ A single HTML file containing:
   - Renders interactive SVGs to visualize matrix wiring paths using ribbon cable color coding.
   - Handles the mirroring logic for the bottom (soldering) view and layer switching for top view.
   - Wiring choice (`#wiringSelect` / `#kleWiringSelect`): diode matrix, or direct wiring for macropads (`buildDirectGrids` → `matrix_pins.direct`, one pin per key, shared GND; drawn by `drawControllers(..., direct)`).
-  - Firmware export: `firmwareSpec()` (shared pins/matrix/split/info.json, never re-routes) feeds the Vial ZIP and `buildQmkFirmware('via'|'qmk')` (keyboard.json, keymaps from `legendToKeycode`/`firmwareLayers`, `via.json` from `viaLayoutKLE`, build.sh, BUILD.md).
-- **Tests** (`tests/`, `npm test`): `harness.js` runs the real `cubify.js` in a fake DOM; `wiring`, `split`, `boards`, `amoeba`, `direct` and `firmware` test files.
+  - Firmware export: `firmwareSpec()` (one data-driven keyboard.json + slim config.h from the pins on screen, never re-routes) feeds `buildFirmwareFiles('via'|'qmk'|'vial')` (keymaps from `legendToKeycode`/`firmwareLayers`, via.json / vial.json from `viaLayoutKLE`, `buildScript`, `BUILD.md` and the pop-up both from `firmwareGuide`).
+  - Boards: `boardProfiles` (pins, default rows/cols) + `BOARD_META` (label, TRRS pin, MCU/bootloader, BOOT/RESET buttons) + `LED_SUPPLY`.
+- **Docs:** `docs/audit-2026-10-18.md` (design-system audit, bug report).
+- **Tests** (`tests/`, `npm test`): `harness.js` runs the real `cubify.js` in a fake DOM; `wiring`, `split`, `boards`, `boards-switch`, `amoeba`, `direct`, `firmware` and `ui` test files (strict mode).
 
 ### 2. Layout Configurations (`*.json`)
 These files define the physical key layout and the matrix structure, extracted from tools like QMK Configurator or a keyboard's source code. They are consumed by the visualizer to render the keyboard.
