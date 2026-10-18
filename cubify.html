@@ -145,6 +145,14 @@
             background: #45475a !important;
             border: 3px dashed var(--accent) !important;
         }
+        .fw-steps { gap: 10px; font-size: 13px; color: var(--text-sub); }
+        .fw-step { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--key-bg); }
+        .fw-step.done { border-color: #a6e3a1; color: var(--text-main); }
+        .fw-step.done::after { content: "✓"; color: #a6e3a1; font-weight: bold; }
+        .fw-hint { font-size: 11px; opacity: 0.75; }
+        .fw-arrow { opacity: 0.5; }
+        #exportFirmwareBtn { background: var(--blue, #89b4fa); color: #11111b; }
+        button:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
         .assigning-mode .key {
             cursor: crosshair !important;
         }
@@ -209,12 +217,24 @@
             <button id="viewToggle">👀 View: Top (Keycaps)</button>
             <button id="clearAllBtn" style="margin-left: 10px; background: var(--red, #f38ba8); color: #11111b; font-weight: bold;">🗑️ Clear All</button>
             <button id="exportVialZipBtn" style="margin-left: 10px; background: var(--green, #a6e3a1); color: #11111b; font-weight: bold; display: none;">📦 Export Vial ZIP</button>
-            <select id="firmwareTarget" title="Firmware to export: VIA (remap keys live in usevia.app) or plain QMK" style="margin-left: 10px; display: none;">
-                <option value="via" selected>VIA firmware</option>
-                <option value="qmk">QMK firmware</option>
-            </select>
-            <button id="exportFirmwareBtn" title="Download a QMK keyboard folder (keyboard.json, keymaps, build.sh; via.json for VIA) built from the wiring shown" style="background: var(--blue, #89b4fa); color: #11111b; font-weight: bold; display: none;">⚙️ Export firmware</button>
 
+        </div>
+
+        <!-- Firmware in four steps: each step turns green with a ✓ once done (cubify.js updateFirmwareSteps) -->
+        <div id="firmwareSteps" class="controls fw-steps">
+            <b style="color: var(--text-main);">⚙️ Firmware:</b>
+            <span class="fw-step" id="fwStep1">① Load the layout JSON <span class="fw-hint">(Local JSON or Import KLE, e.g. from editor.keyboard-tools.xyz)</span></span>
+            <span class="fw-arrow">→</span>
+            <span class="fw-step" id="fwStep2">② Build for
+                <select id="firmwareTarget" title="VIA: remap keys live in usevia.app. QMK: plain firmware, keymap fixed at build time.">
+                    <option value="via" selected>VIA</option>
+                    <option value="qmk">QMK</option>
+                </select>
+            </span>
+            <span class="fw-arrow">→</span>
+            <span class="fw-step" id="fwStep3">③ <button id="fwShowWiringBtn" title="Draw the rows, columns and pins to solder">Show wiring</button></span>
+            <span class="fw-arrow">→</span>
+            <span class="fw-step" id="fwStep4">④ <button id="exportFirmwareBtn" disabled title="Load a layout first (step ①)">⚙️ Export firmware</button> <span class="fw-hint">ZIP: keyboard.json, keymaps, via.json, build.sh + instructions</span></span>
         </div>
     </div>
 
@@ -321,6 +341,6 @@
         </div>
     </div>
 
-    <script src="cubify.js?v=27"></script>
+    <script src="cubify.js?v=28"></script>
 </body>
 </html>

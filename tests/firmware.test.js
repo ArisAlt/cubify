@@ -28,7 +28,38 @@ describe("importing a keyboard-tools.xyz KLE file", () => {
         assert.deepEqual(j.matrix_pins.rows, ["GP0", "GP1", "GP2", "GP3", "GP4"]);
         assert.equal(j.matrix_pins.cols[0], "GP5");
         assert.equal(j.matrix_pins.cols.at(-1), "GP22");
-        assert.equal(ctx.byId("exportFirmwareBtn").style.display, "inline-block");
+        assert.equal(ctx.byId("exportFirmwareBtn").disabled, false);
+    });
+});
+
+describe("firmware step bar: ① load → ② VIA/QMK → ③ show wiring → ④ export", () => {
+    const done = (ctx, n) => /\bdone\b/.test(ctx.byId("fwStep" + n).className);
+
+    test("before a layout: nothing done, Export disabled, Show wiring asks for a layout", () => {
+        const ctx = h.load();
+        assert.equal(ctx.byId("exportFirmwareBtn").disabled, true);
+        [1, 2, 3, 4].forEach(n => assert.ok(!done(ctx, n), `step ${n} not done`));
+        ctx.byId("fwShowWiringBtn").click();
+        assert.ok(ctx.alerts.some(a => /Load a layout first/.test(a)));
+    });
+
+    test("each step ticks off as it's done; Clear All resets", async () => {
+        const ctx = alice();
+        assert.ok(done(ctx, 1) && done(ctx, 2), "layout loaded, target chosen");
+        assert.ok(!done(ctx, 3) && !done(ctx, 4));
+        ctx.byId("fwShowWiringBtn").click();
+        assert.equal(ctx.byId("showWiring").checked, true);
+        assert.ok(done(ctx, 3), "wiring shown");
+        assert.ok(ctx.byId("stage").children.some(c => c.tagName === "svg"), "wiring drawn");
+        await fw(ctx);
+        assert.ok(done(ctx, 4), "exported");
+        assert.equal(ctx.byId("firmwareModal").style.display, "flex", "build instructions shown");
+        assert.match(ctx.byId("firmwareModalBody").innerHTML, /build\.sh/);
+        ctx.byId("firmwareTarget").value = "qmk"; ctx.byId("firmwareTarget").dispatch("change");
+        assert.ok(!done(ctx, 4), "switching VIA/QMK means exporting again");
+        ctx.byId("clearAllBtn").click();
+        assert.equal(ctx.byId("exportFirmwareBtn").disabled, true);
+        [1, 2, 3, 4].forEach(n => assert.ok(!done(ctx, n), `step ${n} reset`));
     });
 });
 

@@ -32,10 +32,12 @@
 
 ## Usage
 
-1. Open `cubify.html` in any modern web browser.
-2. Pick your controller in *MCU Profile*, then load the layout: a KLE `.json` or QMK `keyboard.json` in *Local JSON*, or paste KLE into *Import KLE*.
-3. Tick *Show Wiring* (or switch to the bottom/solder view) and wire rows, columns and pins as drawn. Hover a key for its matrix position and pins.
-4. Choose *VIA firmware* or *QMK firmware* and press *⚙️ Export firmware*; unzip and run `./build.sh`, then flash the `.uf2`/`.hex`.
+1. Open `cubify.html` in any modern web browser and pick your controller in *MCU Profile*.
+2. Follow the **⚙️ Firmware** step bar under the controls (each step turns green with a ✓):
+   1. **Load the layout JSON**: a KLE `.json` (e.g. exported from editor.keyboard-tools.xyz) or QMK `keyboard.json` in *Local JSON*, or paste KLE into *Import KLE*.
+   2. **Build for VIA or QMK.**
+   3. **Show wiring**: wire rows, columns and pins as drawn (the bottom view is the solder side). Hover a key for its matrix position and pins.
+   4. **⚙️ Export firmware** (enabled once a layout is loaded): one ZIP with all files and the build/flash instructions. Unzip, run `./build.sh`, flash the `.uf2`/`.hex`.
 
 ## Testing
 

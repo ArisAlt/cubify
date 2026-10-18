@@ -90,7 +90,8 @@ const UNIT_SIZE = 55; // 1U = 55px
                 if (existingSvg) existingSvg.remove();
                 warningBanner.style.display = 'none';
                 exportVialZipBtn.style.display = 'none';
-                showFirmwareExport(false);
+                firmwareExported = false;
+                updateFirmwareSteps();
                 if (fetchKeymapBtn) fetchKeymapBtn.style.display = 'none';
                 layerSelect.style.display = 'none';
                 parsedKeymaps = null;
@@ -203,12 +204,21 @@ const UNIT_SIZE = 55; // 1U = 55px
             return coords.length >= 2 ? [coords[0], coords[1]] : [[0, 0], [0, 1]];
         }
 
-        // The QMK / VIA firmware export controls appear with the Vial button (after a KLE import).
-        function showFirmwareExport(on) {
-            ['firmwareTarget', 'exportFirmwareBtn'].forEach(id => {
-                const el = document.getElementById(id);
-                if (el) el.style.display = on ? 'inline-block' : 'none';
+        // Firmware step bar: ① layout loaded, ② VIA/QMK chosen, ③ wiring shown, ④ exported.
+        // Export stays disabled until there's a layout to build from.
+        let firmwareExported = false;
+        function updateFirmwareSteps() {
+            const loaded = !!currentJSON;
+            const wiring = loaded && !!(document.getElementById('showWiring') || {}).checked;
+            [[1, loaded], [2, loaded], [3, wiring], [4, loaded && firmwareExported]].forEach(([n, done]) => {
+                const el = document.getElementById('fwStep' + n);
+                if (el) el.className = 'fw-step' + (done ? ' done' : '');
             });
+            const btn = document.getElementById('exportFirmwareBtn');
+            if (btn) {
+                btn.disabled = !loaded;
+                btn.title = loaded ? 'Download the firmware folder (ZIP) with build and flash instructions' : 'Load a layout first (step ①)';
+            }
         }
 
         function extractLayout(jsonObj) {
@@ -739,7 +749,6 @@ const UNIT_SIZE = 55; // 1U = 55px
                     kleModal.style.display = 'none';
                     renderKeyboard();
                     exportVialZipBtn.style.display = 'inline-block';
-                    showFirmwareExport(true);
                     if (!quietReroute) alert("KLE layout successfully imported and auto-routed!");
 
                 } catch (e) {
@@ -1790,6 +1799,7 @@ const UNIT_SIZE = 55; // 1U = 55px
 
         function renderKeyboard() {
             if (!currentJSON) return;
+            updateFirmwareSteps();
 
             stage.innerHTML = '';
 
@@ -2745,6 +2755,8 @@ const UNIT_SIZE = 55; // 1U = 55px
                     a.click();
                     a.remove();
                     URL.revokeObjectURL(url);
+                    firmwareExported = true;
+                    updateFirmwareSteps();
                     showFirmwareModal(fw);
                 });
             });
@@ -2764,5 +2776,14 @@ const UNIT_SIZE = 55; // 1U = 55px
             ].join('');
             modal.style.display = 'flex';
         }
+        // ③ Show wiring: tick "Show Wiring" and draw it.
+        const fwShowWiringBtn = document.getElementById('fwShowWiringBtn');
+        if (fwShowWiringBtn) fwShowWiringBtn.addEventListener('click', () => {
+            if (!currentJSON) { alert('Load a layout first (step ①): Local JSON or Import KLE.'); return; }
+            showWiringCheckbox.checked = true;
+            renderKeyboard();
+        });
+        if (firmwareTarget) firmwareTarget.addEventListener('change', () => { firmwareExported = false; updateFirmwareSteps(); });
+        updateFirmwareSteps();
         const closeFirmwareBtn = document.getElementById('closeFirmwareBtn');
         if (closeFirmwareBtn) closeFirmwareBtn.addEventListener('click', () => { document.getElementById('firmwareModal').style.display = 'none'; });
