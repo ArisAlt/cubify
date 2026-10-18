@@ -125,39 +125,40 @@ describe("direct wiring: drawing", () => {
 });
 
 describe("direct wiring: export", () => {
-    test("info.json has matrix_pins.direct and no diode_direction; config.h explains it", async () => {
+    test("keyboard.json has matrix_pins.direct and no diode_direction; config.h explains it", async () => {
         const ctx = direct(fx.ortho(3, 3));
         const files = await h.exportZip(ctx);
-        const info = JSON.parse(files["info.json"]);
+        const info = JSON.parse(files["keyboard.json"]);
         assert.deepEqual(info.matrix_pins, { direct: GRID_3x3 });
         assert.ok(!("diode_direction" in info));
         assert.ok(!("split" in info));
+        assert.ok(!files["info.json"], "one data-driven keyboard.json, no info.json");
         const cfg = files["config.h"];
         assert.doesNotMatch(cfg, /#define (DIODE_DIRECTION|MATRIX_ROW_PINS|MATRIX_COL_PINS)/);
         assert.match(cfg, /\/\/ Direct wiring: every switch has its own GPIO/);
         assert.match(cfg, /\/\/ {3}#define DIRECT_PINS \{ \{ GP0, GP1, GP2 \}, \{ GP3, GP4, GP5 \}, \{ GP6, GP7, GP8 \} \}/);
-        const cfgNums = h.parseConfigH(cfg);
+        const cfgNums = h.matrixOf(files);
         assert.equal(cfgNums.rows, 3);
         assert.equal(cfgNums.cols, 3);
         assert.deepEqual(JSON.parse(files["keymaps/vial/vial.json"]).matrix, { rows: 3, cols: 3 });
     });
 
-    test("gaps export as null in info.json and NO_PIN in the config.h comment", async () => {
+    test("gaps export as null in keyboard.json and NO_PIN in the config.h comment", async () => {
         const files = await h.exportZip(direct(fx.holeyTopRow()));
-        assert.ok(JSON.parse(files["info.json"]).matrix_pins.direct.flat().includes(null));
+        assert.ok(JSON.parse(files["keyboard.json"]).matrix_pins.direct.flat().includes(null));
         assert.match(files["config.h"], /NO_PIN/);
     });
 
     test("split: right half in split.matrix_pins.right.direct, link pin kept out, MATRIX_ROWS doubled", async () => {
         const ctx = direct(fx.ortho(2, 3, { gap: 3 }), { split: true });
         const files = await h.exportZip(ctx);
-        const info = JSON.parse(files["info.json"]);
+        const info = JSON.parse(files["keyboard.json"]);
         const left = info.matrix_pins.direct, right = info.split.matrix_pins.right.direct;
         assert.deepEqual(left, [["GP0", "GP1", "GP2"], ["GP3", "GP4", "GP5"]]);
         assert.deepEqual(right, left, "mirrored right half: mirror-twin keys share a pin");
         assert.deepEqual(info.split.serial, { driver: "vendor", pin: "GP29" });
         assert.ok(![...left.flat(), ...right.flat()].includes("GP29"));
-        assert.equal(h.parseConfigH(files["config.h"]).rows, 4);
+        assert.equal(h.matrixOf(files).rows, 4);
         assert.match(files["config.h"], /DIRECT_PINS_RIGHT/);
         // the rest of the explicit split config still applies; no matrix pin lists for either side
         assert.deepEqual(info.split.transport, { protocol: "serial" });
@@ -270,7 +271,7 @@ describe("direct wiring: QMK upload", () => {
         h.setView(ctx, { wiring: true });
         assert.equal(ctx.byId("boardSelect").value, "rp2040_zero", "board detected from the direct pins");
         assert.deepEqual(h.readKeys(ctx).map(k => k.rowPin), ["GP2", "GP3", "GP4", "GP5", "GP6"]);
-        const info = JSON.parse((await h.exportZip(ctx))["info.json"]);
+        const info = JSON.parse((await h.exportZip(ctx))["keyboard.json"]);
         assert.deepEqual(info.matrix_pins, { direct: grid });
     });
 });

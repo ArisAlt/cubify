@@ -196,14 +196,26 @@ function parseConfigH(txt) {
     };
 }
 
-/** Press an export button (Vial ZIP by default) and return its files, keyed by path inside the keyboard folder. */
-async function exportZip(ctx, button = "exportVialZipBtn") {
+/** Step ④: pick the firmware (Vial by default; "via", "qmk") and press Export firmware. Returns the ZIP's
+ *  files, keyed by path inside the keyboard folder. */
+/** Matrix size and pins from an exported keyboard.json, computed the way QMK does (matrix_size from
+ *  matrix_pins or the direct grid; rows doubled for a split). */
+function matrixOf(files) {
+    const kb = JSON.parse(files["keyboard.json"]);
+    const mp = kb.matrix_pins || {};
+    const rows = mp.direct ? mp.direct.length : (mp.rows || []).length;
+    const cols = mp.direct ? Math.max(...mp.direct.map(r => r.length)) : (mp.cols || []).length;
+    return { kb, rows: kb.split && kb.split.enabled ? rows * 2 : rows, cols, rowPins: mp.rows || [], colPins: mp.cols || [] };
+}
+
+async function exportZip(ctx, target = "vial") {
     for (const k of Object.keys(ctx.zipFiles)) delete ctx.zipFiles[k];
-    ctx.byId(button).click();
+    ctx.byId("firmwareTarget").value = target;
+    ctx.byId("exportFirmwareBtn").click();
     await Promise.resolve();
     const files = {};
     for (const [k, v] of Object.entries(ctx.zipFiles)) files[k.split("/").slice(1).join("/")] = v;
     return files;
 }
 
-module.exports = { load, importKLE, uploadJSON, setView, readAmoeba, readControllers, readKeys, readWires, wireGroups, parseConfigH, exportZip, UNIT, ZONE };
+module.exports = { matrixOf, load, importKLE, uploadJSON, setView, readAmoeba, readControllers, readKeys, readWires, wireGroups, parseConfigH, exportZip, UNIT, ZONE };

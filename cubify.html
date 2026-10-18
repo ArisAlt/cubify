@@ -216,7 +216,6 @@
 
             <button id="viewToggle">👀 View: Top (Keycaps)</button>
             <button id="clearAllBtn" style="margin-left: 10px; background: var(--red, #f38ba8); color: #11111b; font-weight: bold;">🗑️ Clear All</button>
-            <button id="exportVialZipBtn" style="margin-left: 10px; background: var(--green, #a6e3a1); color: #11111b; font-weight: bold; display: none;">📦 Export Vial ZIP</button>
 
         </div>
 
@@ -226,15 +225,16 @@
             <span class="fw-step" id="fwStep1">① Load the layout JSON <span class="fw-hint">(Local JSON or Import KLE, e.g. from editor.keyboard-tools.xyz)</span></span>
             <span class="fw-arrow">→</span>
             <span class="fw-step" id="fwStep2">② Build for
-                <select id="firmwareTarget" title="VIA: remap keys live in usevia.app. QMK: plain firmware, keymap fixed at build time.">
+                <select id="firmwareTarget" title="VIA: remap keys live in usevia.app. QMK: plain firmware, keymap fixed at build time. Vial: like VIA, plus macros/combos in the Vial app (builds with vial-qmk).">
                     <option value="via" selected>VIA</option>
                     <option value="qmk">QMK</option>
+                    <option value="vial">Vial</option>
                 </select>
             </span>
             <span class="fw-arrow">→</span>
             <span class="fw-step" id="fwStep3">③ <button id="fwShowWiringBtn" title="Draw the rows, columns and pins to solder">Show wiring</button></span>
             <span class="fw-arrow">→</span>
-            <span class="fw-step" id="fwStep4">④ <button id="exportFirmwareBtn" disabled title="Load a layout first (step ①)">⚙️ Export firmware</button> <span class="fw-hint">ZIP: keyboard.json, keymaps, via.json, build.sh + instructions</span></span>
+            <span class="fw-step" id="fwStep4">④ <button id="exportFirmwareBtn" disabled title="Load a layout first (step ①)">⚙️ Export firmware</button> <span class="fw-hint">ZIP with all files, build.sh and step-by-step instructions</span></span>
         </div>
     </div>
 
@@ -255,61 +255,10 @@
     <div id="amoebaLegend" style="display:none; margin-top: 12px; padding: 12px 15px; background: var(--panel-bg); border-radius: 8px; color: var(--text-sub); font-size: 13px; line-height: 1.7;"></div>
     <div id="tooltip"></div>
 
-    <!-- Compile Instructions Modal (shown after Vial ZIP download) -->
-    <div id="vialCompileModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:200; align-items:center; justify-content:center;">
-        <div style="background:var(--panel-bg); border:1px solid var(--green, #a6e3a1); border-radius:12px; padding:28px; width:680px; max-width:92%; max-height:90vh; overflow-y:auto; box-shadow:0 8px 40px rgba(0,0,0,0.6);">
-            <h3 style="margin-top:0; color:var(--green, #a6e3a1); font-size:18px;">📦 Vial ZIP Downloaded — How to Compile</h3>
-            <p style="color:var(--text-sub); font-size:13px; margin-top:0;">Follow these steps to build and flash your Vial firmware. Requires a working <a href="https://docs.qmk.fm/#/newbs_getting_started" target="_blank" style="color:var(--blue,#89b4fa);">QMK build environment</a>.</p>
-
-            <div style="display:flex; flex-direction:column; gap:14px; font-family:monospace; font-size:13px;">
-
-                <div style="background:#11111b; border-left:3px solid var(--green,#a6e3a1); border-radius:6px; padding:12px 16px;">
-                    <div style="color:var(--text-sub); margin-bottom:6px; font-family:system-ui; font-size:12px; font-weight:bold;">STEP 1 — Clone vial-qmk (once)</div>
-                    <code style="color:#a6e3a1;">git clone https://github.com/vial-kb/vial-qmk.git</code><br>
-                    <code style="color:#a6e3a1;">cd vial-qmk &amp;&amp; make git-submodule</code>
-                    <div style="color:var(--text-sub); font-size:11px; margin-top:6px; font-family:system-ui;">⚠️ Keep vial-qmk <strong>outside</strong> your existing qmk_firmware folder.</div>
-                </div>
-
-                <div style="background:#11111b; border-left:3px solid var(--peach,#fab387); border-radius:6px; padding:12px 16px;">
-                    <div style="color:var(--text-sub); margin-bottom:6px; font-family:system-ui; font-size:12px; font-weight:bold;">STEP 2 — Copy your keyboard into vial-qmk</div>
-                    <code style="color:#fab387;">cp -r <span id="compileKbName">custom_handwired</span>/  vial-qmk/keyboards/handwired/</code>
-                    <div style="color:var(--text-sub); font-size:11px; margin-top:6px; font-family:system-ui;">Extract the ZIP first. The folder goes under <code>keyboards/handwired/</code>.</div>
-                </div>
-
-                <div style="background:#11111b; border-left:3px solid var(--mauve,#cba6f7); border-radius:6px; padding:12px 16px;">
-                    <div style="color:var(--text-sub); margin-bottom:6px; font-family:system-ui; font-size:12px; font-weight:bold;">STEP 3 — Verify the environment</div>
-                    <code style="color:#cba6f7;">cd vial-qmk &amp;&amp; qmk doctor</code>
-                    <div style="color:var(--text-sub); font-size:11px; margin-top:6px; font-family:system-ui;">The only expected warning is about the upstream remote. All else should be green.</div>
-                </div>
-
-                <div style="background:#11111b; border-left:3px solid var(--blue,#89b4fa); border-radius:6px; padding:12px 16px;">
-                    <div style="color:var(--text-sub); margin-bottom:6px; font-family:system-ui; font-size:12px; font-weight:bold;">STEP 4 — Compile</div>
-                    <code style="color:#89b4fa;">make handwired/<span id="compileKbName2">custom_handwired</span>:vial</code>
-                    <div style="color:var(--text-sub); font-size:11px; margin-top:6px; font-family:system-ui;">Use <code>make</code>, not <code>qmk compile</code> — the latter defaults to QMK firmware, not Vial.</div>
-                </div>
-
-                <div style="background:#11111b; border-left:3px solid var(--accent,#f38ba8); border-radius:6px; padding:12px 16px;">
-                    <div style="color:var(--text-sub); margin-bottom:6px; font-family:system-ui; font-size:12px; font-weight:bold;">STEP 5 — Flash</div>
-                    <code style="color:#f38ba8;">make handwired/<span id="compileKbName3">custom_handwired</span>:vial:flash</code>
-                    <div style="color:var(--text-sub); font-size:11px; margin-top:6px; font-family:system-ui;">Or flash the <code>.uf2</code> / <code>.hex</code> file with <a href="https://github.com/qmk/qmk_toolbox/releases" target="_blank" style="color:var(--blue,#89b4fa);">QMK Toolbox</a>. Put your board in bootloader mode first.</div>
-                </div>
-
-                <div style="background:rgba(166,227,161,0.07); border:1px solid rgba(166,227,161,0.3); border-radius:6px; padding:10px 14px; font-family:system-ui; font-size:12px; color:var(--text-sub);">
-                    💡 <strong style="color:var(--text-main);">After flashing:</strong> Open the <a href="https://get.vial.today/download/" target="_blank" style="color:var(--blue,#89b4fa);">Vial GUI</a>, your keyboard should be auto-detected. Use <strong>Security → Unlock</strong> (hold top-left two keys for ~3s) before making changes.
-                </div>
-            </div>
-
-            <div style="display:flex; justify-content:flex-end; margin-top:20px;">
-                <button id="closeVialCompileBtn" style="background:var(--green,#a6e3a1); color:#11111b; font-weight:bold; padding:8px 20px;">Got it ✓</button>
-            </div>
-        </div>
-    </div>
-
-
-    <!-- QMK / VIA firmware: build + flash steps (filled by cubify.js after the ZIP download) -->
+    <!-- Firmware guide: numbered build + flash steps for VIA / QMK / Vial (filled by cubify.js guideHTML) -->
     <div id="firmwareModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:200; align-items:center; justify-content:center;">
-        <div style="background:var(--panel-bg); border:1px solid var(--blue, #89b4fa); border-radius:12px; padding:28px; width:640px; max-width:92%; max-height:90vh; overflow-y:auto; font-size:14px; line-height:1.6;">
-            <h3 style="margin-top:0; color:var(--blue, #89b4fa);">⚙️ Firmware downloaded: build &amp; flash</h3>
+        <div style="background:var(--panel-bg); border:1px solid var(--blue, #89b4fa); border-radius:12px; padding:28px; width:680px; max-width:92%; max-height:90vh; overflow-y:auto; font-size:14px; line-height:1.5; box-shadow:0 8px 40px rgba(0,0,0,0.6);">
+            <h3 id="firmwareModalTitle" style="margin-top:0; color:var(--blue, #89b4fa); font-size:18px;">⚙️ Firmware downloaded: build &amp; flash</h3>
             <div id="firmwareModalBody"></div>
             <div style="display:flex; justify-content:flex-end; margin-top:16px;">
                 <button id="closeFirmwareBtn" style="background:var(--blue,#89b4fa); color:#11111b; font-weight:bold; padding:8px 20px;">Got it ✓</button>
@@ -341,6 +290,6 @@
         </div>
     </div>
 
-    <script src="cubify.js?v=28"></script>
+    <script src="cubify.js?v=30"></script>
 </body>
 </html>

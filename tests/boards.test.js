@@ -53,17 +53,18 @@ describe("monolithic vs split routing", () => {
             assert.equal(ctx.byId("boardSelect").value, `split:${board}`);
             assert.match(ctx.byId("boardInfo").textContent, new RegExp(`Two controllers.*TRRS cable on ${pin}`));
             const files = await h.exportZip(ctx);
-            const info = JSON.parse(files["info.json"]);
+            const info = JSON.parse(files["keyboard.json"]);
             // explicit: split, link method, each side's pins
             assert.deepEqual(info.split, {
                 enabled: true,
                 transport: { protocol: "serial" },
                 serial: { driver: board === "pro_micro" ? "bitbang" : "vendor", pin },
+                usb_detect: { enabled: true },
                 matrix_pins: { right: { rows: j.matrix_pins.rows, cols: j.matrix_pins.cols } },
             });
             assert.match(files["config.h"], new RegExp(`TRRS cable on ${pin}`));
             assert.match(files["config.h"], /#define MASTER_LEFT/, "handedness declared");
-            assert.match(files["config.h"], /#define MATRIX_COL_PINS_RIGHT \{ /, "right-hand pins declared");
+            assert.doesNotMatch(files["config.h"], /MATRIX_\w+_PINS/, "pins live in keyboard.json only");
         });
     }
 

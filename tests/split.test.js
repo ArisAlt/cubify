@@ -38,7 +38,7 @@ describe("right half column numbering", () => {
     test("mirrored / same direction: the right controller declares the same pin list, explicitly", async () => {
         for (const wiring of ["mirrored", "same"]) {
             const ctx = setup({ wiring });
-            const info = JSON.parse((await h.exportZip(ctx))["info.json"]);
+            const info = JSON.parse((await h.exportZip(ctx))["keyboard.json"]);
             assert.deepEqual(info.split.matrix_pins.right, info.matrix_pins, `${wiring}: right pins = left pins`);
         }
     });
@@ -65,9 +65,9 @@ describe("right half column numbering", () => {
         const used = right.filter(p => p !== "NO_PIN");
         assert.deepEqual(used, cols.slice(0, used.length).reverse());
         const files = await h.exportZip(ctx);
-        const info = JSON.parse(files["info.json"]);
+        const info = JSON.parse(files["keyboard.json"]);
         assert.deepEqual(info.split.matrix_pins.right.cols, right.map(p => p === "NO_PIN" ? null : p), "NO_PIN is null in JSON");
-        assert.match(files["config.h"], new RegExp(`#define MATRIX_COL_PINS_RIGHT \\{ ${right.join(", ")} \\}`));
+        assert.match(files["config.h"], new RegExp(`Right half: its own column order[\\s\\S]*// {3}${right.join(", ")}`));
         assert.match(h.readKeys(ctx).length ? ctx.byId("splitNotice").innerHTML : "", /own column order/);
     });
     test("a QMK file's own right-hand pins (split.matrix_pins.right, like keebio/iris rev8) are used for the right half", () => {

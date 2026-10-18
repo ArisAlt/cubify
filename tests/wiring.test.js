@@ -135,19 +135,20 @@ async function checkBoard(ctx, { split = false, expectFit = true } = {}) {
         assert.ok(ctx.alerts.some(a => /ZMK/.test(a)), "explains why the export is refused");
         return { keys, rows, cols, files };
     }
-    const cfg = h.parseConfigH(files["config.h"]);
-    assert.deepEqual(cfg.rowPins, rows, "config.h MATRIX_ROW_PINS differs from displayed row pins");
-    assert.deepEqual(cfg.colPins, cols, "config.h MATRIX_COL_PINS differs from displayed col pins");
-    assert.equal(cfg.cols, cols.length, "MATRIX_COLS ≠ number of column pins");
+    const cfg = h.matrixOf(files);
+    assert.deepEqual(cfg.rowPins, rows, "keyboard.json row pins differ from displayed row pins");
+    assert.deepEqual(cfg.colPins, cols, "keyboard.json col pins differ from displayed col pins");
+    assert.equal(cfg.cols, cols.length, "matrix cols ≠ number of column pins");
     assert.equal(cfg.rows, split ? 2 * rows.length : rows.length,
-        split ? "split MATRIX_ROWS must be 2 × row pins per half" : "MATRIX_ROWS ≠ number of row pins");
-    const info = JSON.parse(files["info.json"]);
-    assert.deepEqual(info.matrix_pins, { rows, cols }, "info.json matrix_pins differ from display");
+        split ? "split matrix rows must be 2 × row pins per half" : "matrix rows ≠ number of row pins");
+    assert.ok(!files["config.h"] || !/MATRIX_(ROW|COL)S?_PINS|MATRIX_ROWS|MATRIX_COLS/.test(files["config.h"]), "pins/matrix only in keyboard.json");
+    const info = cfg.kb;
+    assert.deepEqual(info.matrix_pins, { rows, cols }, "keyboard.json matrix_pins differ from display");
     const infoLayout = Object.values(info.layouts)[0].layout;
-    assert.deepEqual(infoLayout.map(e => e.matrix), keys.map(k => k.matrix), "info.json key order/matrix differs from display");
+    assert.deepEqual(infoLayout.map(e => e.matrix), keys.map(k => k.matrix), "keyboard.json key order/matrix differs from display");
     const vial = JSON.parse(files["keymaps/vial/vial.json"]);
-    assert.equal(vial.matrix.rows, cfg.rows, "vial.json matrix.rows ≠ MATRIX_ROWS");
-    assert.equal(vial.matrix.cols, cfg.cols, "vial.json matrix.cols ≠ MATRIX_COLS");
+    assert.equal(vial.matrix.rows, cfg.rows, "vial.json matrix.rows ≠ the firmware's matrix rows");
+    assert.equal(vial.matrix.cols, cfg.cols, "vial.json matrix.cols ≠ the firmware's matrix cols");
     const labels = vial.layouts.keymap.flat().filter(x => typeof x === "string").sort();
     assert.deepEqual(labels, keys.map(k => k.matrix.join(",")).sort(), "vial.json row,col labels differ from the layout");
     const vcfg = files["keymaps/vial/config.h"];

@@ -157,11 +157,10 @@ describe("Amoeba Royale layer", () => {
         const ctx = h.importKLE(fx.ortho(2, 3), { board: "rp2040_zero" });
         h.setView(ctx, { bottom: true, amoeba: true, layers: ALL });
         let f = await h.exportZip(ctx);
-        assert.match(f["config.h"], /DIODE_DIRECTION ROW2COL/);
-        assert.equal(JSON.parse(f["info.json"]).diode_direction, "ROW2COL");
+        assert.equal(JSON.parse(f["keyboard.json"]).diode_direction, "ROW2COL");
         h.setView(ctx, { bottom: true, amoeba: false });
         f = await h.exportZip(ctx);
-        assert.match(f["config.h"], /DIODE_DIRECTION COL2ROW/);
+        assert.equal(JSON.parse(f["keyboard.json"]).diode_direction, "COL2ROW");
     });
 });
 

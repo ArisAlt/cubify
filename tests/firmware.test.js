@@ -6,7 +6,7 @@ const assert = require("node:assert/strict");
 const h = require("./harness");
 const fx = require("./fixtures");
 
-const fw = (ctx, target = "via") => { ctx.byId("firmwareTarget").value = target; return h.exportZip(ctx, "exportFirmwareBtn"); };
+const fw = (ctx, target = "via") => h.exportZip(ctx, target);
 /** Layer n of a generated keymap.c, as a keycode list in LAYOUT order. */
 function layer(keymapC, n) {
     const m = new RegExp(`\\[${n}\\] = LAYOUT\\(\\n([\\s\\S]*?)\\n    \\),`).exec(keymapC);
@@ -108,7 +108,7 @@ describe("VIA firmware", () => {
         assert.ok(via.layouts.keymap.every(Array.isArray), "no KLE metadata object");
         assert.ok(via.layouts.keymap.flat().some(x => x && typeof x === "object" && "r" in x), "rotated Alice keys keep their rotation");
         assert.match(files["build.sh"], /qmk compile -kb handwired\/alicezero -km via/);
-        assert.match(files["BUILD.md"], /Design → Load/);
+        assert.match(files["BUILD.md"], /"Show Design tab".*Design → "Load Draft Definition" → Load/s);
     });
 
     test("layer 0 comes from the KLE legends; unknown legends are KC_NO and listed", async () => {
@@ -183,5 +183,62 @@ describe("QMK firmware", () => {
         const ctx = h.importKLE(fx.ortho(4, 6, { gap: 3 }), { split: true, board: "nice_nano" });
         assert.deepEqual(Object.keys(await fw(ctx)), []);
         assert.ok(ctx.alerts.some(a => /ZMK, not QMK, VIA or Vial/.test(a)));
+    });
+});
+
+describe("step ④ guide: numbered steps, same in the pop-up and BUILD.md", () => {
+    const steps = html => [...html.matchAll(/STEP (\d) — ([^<]+)</g)].map(m => [+m[1], m[2]]);
+
+    test("one Export button: Vial is a step ② choice and the old top-row Vial button is gone", () => {
+        const html = require("fs").readFileSync(require("path").join(__dirname, "..", "cubify.html"), "utf8");
+        assert.doesNotMatch(html, /exportVialZipBtn|vialCompileModal/);
+        assert.match(html, /<option value="vial">Vial<\/option>/);
+    });
+
+    for (const [target, last, cmd] of [
+        ["via", "LOAD IT IN VIA", /qmk compile -kb handwired\/alicezero -km via/],
+        ["qmk", "CHANGE KEYS LATER", /qmk compile -kb handwired\/alicezero -km default/],
+        ["vial", "OPEN IT IN VIAL", /make handwired\/alicezero:vial/]]) {
+        test(`${target}: five boxes from setup to ${last.toLowerCase()}, BUILD.md has the same steps`, async () => {
+            const ctx = alice();
+            const files = await fw(ctx, target);
+            const html = ctx.byId("firmwareModalBody").innerHTML;
+            const st = steps(html);
+            assert.deepEqual(st.map(s => s[0]), [1, 2, 3, 4, 5]);
+            assert.equal(st[4][1], last);
+            assert.match(html, new RegExp(`alicezero_${target}\\.zip`));
+            assert.match(files["build.sh"], cmd);
+            const md = files["BUILD.md"];
+            st.forEach(([n, title]) => assert.match(md, new RegExp(`## Step ${n}: ${title.replace(/[()]/g, ".")}`, "i")));
+            assert.match(md, /hold its BOOT button/);
+            assert.match(ctx.byId("firmwareModalTitle").textContent, new RegExp(`AliceZero: ${{ via: "VIA", qmk: "QMK", vial: "Vial" }[target]} firmware`));
+        });
+    }
+
+    test("Vial ZIP: build.sh into ~/vial-qmk, unlock keys in the guide, layer 0 from legends", async () => {
+        const files = await fw(alice(), "vial");
+        assert.match(files["build.sh"], /VIAL_HOME="\$\{VIAL_HOME:-\$HOME\/vial-qmk\}"/);
+        assert.ok(!files["INSTALL.md"], "BUILD.md replaces INSTALL.md");
+        assert.match(files["BUILD.md"], /Security → Unlock, then hold \[0,0\] and \[0,1\]/);
+        assert.equal(layer(files["keymaps/vial/keymap.c"], 0)[0], "KC_ESC");
+        const vial = JSON.parse(files["keymaps/vial/vial.json"]);
+        assert.ok(vial.layouts.keymap.flat().some(x => x && typeof x === "object" && "r" in x), "rotation kept");
+    });
+
+    test("Pro Micro: reset-twice flash step and QMK's udev installer; VIA gets its own udev rule", async () => {
+        const ctx = h.importKLE(fx.ortho(4, 6, { gap: 3 }), { split: true, board: "pro_micro" });
+        const md = (await fw(ctx, "via"))["BUILD.md"];
+        assert.match(md, /short RST to GND twice/);
+        assert.match(md, /util\/install_udev\.sh/);
+        assert.match(md, /Each half has its own controller: do this for both halves/);
+        assert.match(md, /ATTRS\{idVendor\}=="feed", ATTRS\{idProduct\}=="[0-9a-f]{4}"/);
+    });
+
+    test("build.sh stops with a clear message when the QMK folder is missing", async () => {
+        const sh = (await fw(alice(), "qmk"))["build.sh"];
+        assert.match(sh, /if \[ ! -d "\$QMK_HOME\/keyboards" \]/);
+        assert.match(sh, /see BUILD\.md, step 1/);
+        // a re-export over an older Cubify folder must not keep its info.json/config.h (they'd override keyboard.json)
+        assert.ok(sh.indexOf('rm -f "$DEST/info.json" "$DEST/config.h"') < sh.indexOf('cp "$HERE/keyboard.json"'));
     });
 });
