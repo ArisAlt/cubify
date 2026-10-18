@@ -7,8 +7,8 @@ const path = require("path");
 const h = require("./harness");
 const fx = require("./fixtures");
 
-const HTML = fs.readFileSync(path.join(__dirname, "..", "cubify.html"), "utf8");
-const JS = fs.readFileSync(path.join(__dirname, "..", "cubify.js"), "utf8");
+const HTML = fs.readFileSync(path.join(__dirname, "..", "keyboardfy.html"), "utf8");
+const JS = fs.readFileSync(path.join(__dirname, "..", "keyboardfy.js"), "utf8");
 
 describe("design tokens", () => {
     test("every CSS variable used is defined in :root (an undefined one made the KLE dialog transparent)", () => {
@@ -53,7 +53,7 @@ describe("dialogs", () => {
 });
 
 describe("code health", () => {
-    test("cubify.js runs in strict mode (no undeclared variables leaking onto window)", () => {
+    test("keyboardfy.js runs in strict mode (no undeclared variables leaking onto window)", () => {
         // the harness runs it with "use strict"; an import exercises the routing code
         const ctx = h.importKLE(fx.ortho(3, 4), { board: "rp2040_zero" });
         assert.ok(ctx.app.currentJSON, ctx.alerts.join(" | "));

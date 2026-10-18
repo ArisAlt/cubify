@@ -164,7 +164,7 @@ describe("Amoeba Royale layer", () => {
     });
 });
 
-// The two readability rules from cubify.js, checked independently on the drawn SVG.
+// The two readability rules from keyboardfy.js, checked independently on the drawn SVG.
 //  1. Dead zone: wires within 30° of parallel keep >= 2 px between their EDGES (stroke widths
 //     included), ignoring the first/last 4 px at pads. Crossing at an angle is fine.
 //  2. Pads: a wire stays >= 1 px clear of every pad except the ones at its own two ends.

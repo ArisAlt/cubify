@@ -1,10 +1,10 @@
-// Runs the real cubify.js against a minimal fake DOM so tests see exactly what the
+// Runs the real keyboardfy.js against a minimal fake DOM so tests see exactly what the
 // page renders: key labels/pins, the wiring SVG and the exported Vial ZIP files.
 "use strict";
 const fs = require("fs");
 const path = require("path");
 
-const SRC = fs.readFileSync(path.join(__dirname, "..", "cubify.js"), "utf8");
+const SRC = fs.readFileSync(path.join(__dirname, "..", "keyboardfy.js"), "utf8");
 const UNIT = 55;
 const ZONE = UNIT * 0.22;
 
@@ -49,7 +49,7 @@ function load({ split = false, board = "auto", wiring = null } = {}) {
     }
     class FileReader { readAsText(f) { this.onload({ target: { result: f.text } }); } }
     const URL = { createObjectURL: () => "blob:", revokeObjectURL() {} };
-    // Same defaults as cubify.html's Amoeba layer bar.
+    // Same defaults as keyboardfy.html's Amoeba layer bar.
     for (const id of ["amoebaShowRows", "amoebaShowCols", "amoebaShowLed"]) byId(id).checked = true;
     byId("amoebaZoom").value = "2";
 
@@ -57,7 +57,7 @@ function load({ split = false, board = "auto", wiring = null } = {}) {
         "\"use strict\";\n" + SRC + "\n;return { get currentJSON(){ return currentJSON; }, renderKeyboard, boardProfiles, BOARD_META, ledSupply," +
         " get isBottomView(){ return isBottomView; } };");
     const app = factory(document, {}, m => alerts.push(String(m)), JSZip, URL, FileReader);
-    // cubify.js builds both board dropdowns at load; pick like a user would.
+    // keyboardfy.js builds both board dropdowns at load; pick like a user would.
     byId("kleBoardSelect").value = (split ? "split:" : "") + board;
     if (wiring) byId("kleWiringSelect").value = wiring; // "matrix" | "direct"
     return { app, els, byId, alerts, zipFiles, document };
@@ -170,7 +170,7 @@ function readWires(ctx) {
     return { lines, dots };
 }
 
-/** Group key indices by the wire they sit on, using the anchor points Cubify draws. */
+/** Group key indices by the wire they sit on, using the anchor points Keyboardfy draws. */
 function wireGroups(keys, wires, kind) {
     const anchor = k => [k.cx, kind === "row" ? k.cy - ZONE : k.cy + ZONE];
     const near = (p, q) => Math.abs(p[0] - q[0]) < 0.01 && Math.abs(p[1] - q[1]) < 0.01;

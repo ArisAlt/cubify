@@ -1,4 +1,4 @@
-// Row/column → pin → wire consistency tests for Cubify.  Run: node --test tests/
+// Row/column → pin → wire consistency tests for Keyboardfy.  Run: node --test tests/
 "use strict";
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");

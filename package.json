@@ -1,7 +1,7 @@
 {
-  "name": "cubify",
+  "name": "keyboardfy",
   "private": true,
-  "description": "Cubify — QMK handwiring visualizer",
+  "description": "Keyboardfy — QMK handwiring visualizer",
   "scripts": {
     "test": "node --test tests/"
   }

@@ -1,14 +1,14 @@
 # Project Scaffold
 
-This document outlines the file structure and key components of the **Cubify** project.
+This document outlines the file structure and key components of the **Keyboardfy** project.
 
 ## Directory Structure
 
 ```text
-cubify/
+keyboardfy/
 │
-├── cubify.html               # Main Application File (HTML/CSS)
-├── cubify.js                 # Application Logic
+├── keyboardfy.html               # Main Application File (HTML/CSS)
+├── keyboardfy.js                 # Application Logic
 ├── skills/keyboard-handwiring/  # Public Claude Agent Skill (MIT), own git repo: github.com/ArisAlt/keyboard-handwiring-skill
 ├── skills/keyboard-handwiring.skill  # Packaged skill (upload/install)
 ├── README.md                 # Project Overview and Usage Instructions
@@ -25,7 +25,7 @@ cubify/
 
 ## Key Components
 
-### 1. Main Application (`cubify.html` + `cubify.js`)
+### 1. Main Application (`keyboardfy.html` + `keyboardfy.js`)
 A single HTML file containing:
 - **UI Structure**: File upload, MCU selection, view toggle button, and keyboard stage.
 - **Styling**: Modern, dark-themed CSS with clear visual feedback for interactive elements.
@@ -40,7 +40,7 @@ A single HTML file containing:
   - Firmware export: `firmwareSpec()` (one data-driven keyboard.json + slim config.h from the pins on screen, never re-routes) feeds `buildFirmwareFiles('via'|'qmk'|'vial')` (keymaps from `legendToKeycode`/`firmwareLayers`, via.json / vial.json from `viaLayoutKLE`, `buildScript`, `BUILD.md` and the pop-up both from `firmwareGuide`).
   - Boards: `boardProfiles` (pins, default rows/cols) + `BOARD_META` (label, TRRS pin, MCU/bootloader, BOOT/RESET buttons) + `LED_SUPPLY`.
 - **Docs:** `docs/audit-2026-10-18.md` (design-system audit, bug report).
-- **Tests** (`tests/`, `npm test`): `harness.js` runs the real `cubify.js` in a fake DOM; `wiring`, `split`, `boards`, `boards-switch`, `amoeba`, `direct`, `firmware` and `ui` test files (strict mode).
+- **Tests** (`tests/`, `npm test`): `harness.js` runs the real `keyboardfy.js` in a fake DOM; `wiring`, `split`, `boards`, `boards-switch`, `amoeba`, `direct`, `firmware` and `ui` test files (strict mode).
 
 ### 2. Layout Configurations (`*.json`)
 These files define the physical key layout and the matrix structure, extracted from tools like QMK Configurator or a keyboard's source code. They are consumed by the visualizer to render the keyboard.

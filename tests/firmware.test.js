@@ -190,7 +190,7 @@ describe("step ④ guide: numbered steps, same in the pop-up and BUILD.md", () =
     const steps = html => [...html.matchAll(/STEP (\d) — ([^<]+)</g)].map(m => [+m[1], m[2]]);
 
     test("one Export button: Vial is a step ② choice and the old top-row Vial button is gone", () => {
-        const html = require("fs").readFileSync(require("path").join(__dirname, "..", "cubify.html"), "utf8");
+        const html = require("fs").readFileSync(require("path").join(__dirname, "..", "keyboardfy.html"), "utf8");
         assert.doesNotMatch(html, /exportVialZipBtn|vialCompileModal/);
         assert.match(html, /<option value="vial">Vial<\/option>/);
     });
@@ -238,7 +238,7 @@ describe("step ④ guide: numbered steps, same in the pop-up and BUILD.md", () =
         const sh = (await fw(alice(), "qmk"))["build.sh"];
         assert.match(sh, /if \[ ! -d "\$QMK_HOME\/keyboards" \]/);
         assert.match(sh, /see BUILD\.md, step 1/);
-        // a re-export over an older Cubify folder must not keep its info.json/config.h (they'd override keyboard.json)
+        // a re-export over an older Keyboardfy folder must not keep its info.json/config.h (they'd override keyboard.json)
         assert.ok(sh.indexOf('rm -f "$DEST/info.json" "$DEST/config.h"') < sh.indexOf('cp "$HERE/keyboard.json"'));
     });
 });
